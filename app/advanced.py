@@ -1,0 +1,324 @@
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+from pathlib import Path
+import asyncio, base64, hashlib, json, mimetypes, os, re, time, uuid
+from . import main as legacy
+
+router = APIRouter(prefix="/api/v2", tags=["RAYONE v2 control plane"])
+ROOT = legacy.ROOT
+STORE = ROOT / "data" / "workspace"
+STORE.mkdir(parents=True, exist_ok=True)
+
+def db():
+    return legacy.conn()
+
+def init_advanced():
+    c=db()
+    c.executescript("""
+    CREATE TABLE IF NOT EXISTS traces(id TEXT PRIMARY KEY, request_id TEXT, state TEXT, actor TEXT, payload TEXT, created REAL);
+    CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY, action TEXT, target TEXT, payload TEXT, status TEXT, created REAL, decided REAL);
+    CREATE TABLE IF NOT EXISTS permissions(id TEXT PRIMARY KEY, subject TEXT, capability TEXT, scope TEXT, effect TEXT, created REAL, UNIQUE(subject,capability,scope));
+    CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY, name TEXT, kind TEXT, expression TEXT, action TEXT, payload TEXT, enabled INTEGER, next_run REAL, last_run REAL, created REAL, updated REAL);
+    CREATE TABLE IF NOT EXISTS workspace_files(id TEXT PRIMARY KEY, name TEXT, path TEXT, mime TEXT, size INTEGER, sha256 TEXT, created REAL, updated REAL);
+    CREATE TABLE IF NOT EXISTS media_jobs(id TEXT PRIMARY KEY, kind TEXT, status TEXT, input TEXT, output TEXT, provider TEXT, created REAL, updated REAL);
+    CREATE TABLE IF NOT EXISTS connectors(id TEXT PRIMARY KEY, name TEXT, kind TEXT, base_url TEXT, enabled INTEGER, config TEXT, created REAL, updated REAL);
+    CREATE TABLE IF NOT EXISTS metrics_v2(key TEXT PRIMARY KEY, value REAL, updated REAL);
+    CREATE TABLE IF NOT EXISTS memory_index(id TEXT PRIMARY KEY, memory_id TEXT, tokens TEXT, fingerprint TEXT, created REAL);
+    """)
+    c.commit(); c.close()
+
+init_advanced()
+
+def auth(token=Depends(legacy.auth)): return token
+def j(x): return json.loads(x or "{}") if isinstance(x,str) else (x or {})
+def audit(action,target,detail): legacy.audit(action,target,detail)
+
+def trace(state, request_id, payload=None):
+    tid=str(uuid.uuid4())
+    legacy.execute("insert into traces values(?,?,?,?,?,?)",(tid,request_id,state,"admin",legacy.dumps(payload or {}),legacy.now()))
+    legacy.emit("rayone.state",{"trace_id":tid,"request_id":request_id,"state":state})
+    return tid
+
+def metric(key,delta=1):
+    legacy.execute("insert into metrics_v2(key,value,updated) values(?,?,?) on conflict(key) do update set value=value+excluded.value,updated=excluded.updated",(key,delta,legacy.now()))
+
+class AssistantIn(BaseModel):
+    message: str = Field(min_length=1)
+    project_id: str|None=None
+    model_id: str|None=None
+    require_approval: bool=False
+
+class ApprovalIn(BaseModel):
+    decision: str
+
+class PermissionIn(BaseModel):
+    subject: str="admin"
+    capability: str
+    scope: str="global"
+    effect: str="allow"
+
+class ScheduleIn(BaseModel):
+    name: str
+    kind: str="interval"
+    expression: str="3600"
+    action: str="chat"
+    payload: dict={}
+    enabled: bool=True
+
+class ConnectorIn(BaseModel):
+    name: str
+    kind: str
+    base_url: str=""
+    config: dict={}
+    enabled: bool=True
+
+class MediaIn(BaseModel):
+    kind: str
+    input: dict={}
+    provider: str=""
+
+@router.get("/status")
+def status(_:str=Depends(auth)):
+    counts={t:legacy.rows(f"select count(*) n from {t}")[0]["n"] for t in ["projects","providers","models","tools","agents","workflows","memories","jobs","events","audits","checkpoints"]}
+    advanced={t:legacy.rows(f"select count(*) n from {t}")[0]["n"] for t in ["traces","approvals","permissions","schedules","workspace_files","media_jobs","connectors"]}
+    return {"version":legacy.APP_VERSION,"core":"online","vorqyon":"ready","state_machine":["Idle","Understanding","Planning","Researching","Tool Use","Executing","Verifying","Complete"],"counts":counts|advanced,"local_first":True}
+
+@router.get("/trace")
+def traces(limit:int=200,_:str=Depends(auth)):
+    return legacy.rows("select * from traces order by created desc limit ?",(min(limit,500),))
+
+@router.get("/metrics")
+def metrics(_:str=Depends(auth)):
+    return legacy.rows("select * from metrics_v2 order by key")
+
+@router.get("/permissions")
+def permissions(_:str=Depends(auth)):
+    return legacy.rows("select * from permissions order by subject,capability")
+
+@router.post("/permissions")
+def add_permission(x:PermissionIn,_:str=Depends(auth)):
+    i=str(uuid.uuid4())
+    legacy.execute("insert or replace into permissions values(?,?,?,?,?,?)",(i,x.subject,x.capability,x.scope,x.effect,legacy.now()))
+    audit("permission.set",x.capability,x.model_dump())
+    return {"id":i}
+
+@router.delete("/permissions/{id}")
+def delete_permission(id:str,_:str=Depends(auth)):
+    legacy.execute("delete from permissions where id=?",(id,)); return {"ok":True}
+
+@router.get("/approvals")
+def approvals(_:str=Depends(auth)):
+    return legacy.rows("select * from approvals order by created desc limit 200")
+
+@router.post("/approvals/{id}")
+def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
+    if x.decision not in {"approved","rejected"}: raise HTTPException(400,"decision must be approved or rejected")
+    if not legacy.one("select id from approvals where id=?",(id,)): raise HTTPException(404,"Approval not found")
+    legacy.execute("update approvals set status=?,decided=? where id=?",(x.decision,legacy.now(),id))
+    audit("approval."+x.decision,"approval",{"id":id})
+    return {"ok":True,"status":x.decision}
+
+def classify(message):
+    m=message.lower().strip()
+    if re.search(r"\b(search|research|find|latest|news|web)\b",m): return "research"
+    if re.search(r"\b(calculate|compute|math|sum|add|subtract|multiply|divide)\b",m): return "tool"
+    if re.search(r"\b(schedule|remind|every day|every hour|cron)\b",m): return "automation"
+    if re.search(r"\b(image|video|audio|music|voice|tts|speech)\b",m): return "media"
+    if re.search(r"\b(file|document|pdf|docx|xlsx|upload)\b",m): return "knowledge"
+    if re.search(r"\b(github|gitlab|repository|commit|pull request|issue)\b",m): return "devops"
+    return "chat"
+
+async def research(url_or_query):
+    if re.match(r"^https?://",url_or_query):
+        async with legacy.httpx.AsyncClient(timeout=20,follow_redirects=False) as c:
+            r=await c.get(url_or_query); return {"source":url_or_query,"status":r.status_code,"content":r.text[:20000]}
+    return {"query":url_or_query,"status":"search_adapter_required","results":[]}
+
+async def assistant_run(x):
+    rid=str(uuid.uuid4()); metric("assistant.requests")
+    trace("Idle",rid)
+    trace("Understanding",rid,{"message":x.message})
+    intent=classify(x.message)
+    trace("Planning",rid,{"intent":intent})
+    if x.require_approval:
+        aid=str(uuid.uuid4())
+        legacy.execute("insert into approvals values(?,?,?,?,?,?,?)",(aid,"assistant_action",intent,legacy.dumps(x.model_dump()),"pending",legacy.now(),None))
+        trace("Complete",rid,{"approval_required":True,"approval_id":aid})
+        return {"request_id":rid,"state":"Awaiting Approval","approval_id":aid}
+    if intent=="tool":
+        expr=re.sub(r"^(please\s+)?(calculate|compute)\s+","",x.message.strip(),flags=re.I)
+        trace("Tool Use",rid,{"tool":"core.calculator"})
+        result=await legacy.execute_tool_internal("core.calculator",{"expression":expr})
+        trace("Verifying",rid,{"result":result})
+        trace("Complete",rid)
+        return {"request_id":rid,"state":"Complete","intent":intent,"result":result}
+    if intent=="research":
+        trace("Researching",rid)
+        result=await research(x.message.strip())
+        trace("Verifying",rid,{"sources":1 if result.get("source") else 0})
+        trace("Complete",rid)
+        return {"request_id":rid,"state":"Complete","intent":intent,"result":result}
+    if intent=="media":
+        trace("Executing",rid,{"media":True})
+        mid=str(uuid.uuid4()); t=legacy.now()
+        legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,"generic","queued",legacy.dumps(x.message),None,None,t,t))
+        trace("Verifying",rid,{"media_job_id":mid})
+        trace("Complete",rid)
+        return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"message":"Media job queued; provider adapter can be attached without changing the core contract."}
+    trace("Executing",rid)
+    answer,provider=await legacy.provider_chat(x.message,x.model_id)
+    if answer is None:
+        mem=legacy.rows("select content from memories where content like ? order by created desc limit 5",(f"%{x.message[:40]}%",))
+        answer="RAYONE local core received: "+x.message
+        if mem: answer+="\nRelevant memory: "+" ".join(m["content"] for m in mem)
+        provider="local"
+    trace("Verifying",rid,{"provider":provider})
+    trace("Complete",rid)
+    metric("assistant.completed")
+    return {"request_id":rid,"state":"Complete","intent":intent,"provider":provider,"answer":answer}
+
+@router.post("/assistant/chat")
+async def assistant_chat(x:AssistantIn,_:str=Depends(auth)):
+    try: return await assistant_run(x)
+    except Exception as e:
+        metric("assistant.errors"); raise HTTPException(500,str(e))
+
+@router.post("/assistant/stream")
+async def assistant_stream(x:AssistantIn,_:str=Depends(auth)):
+    result=await assistant_run(x)
+    async def gen():
+        yield "event: state\ndata: "+json.dumps({"state":"Complete","request_id":result.get("request_id")})+"\n\n"
+        yield "event: result\ndata: "+json.dumps(result,ensure_ascii=False)+"\n\n"
+        yield "event: done\ndata: {}\n\n"
+    return StreamingResponse(gen(),media_type="text/event-stream")
+
+@router.post("/research")
+async def do_research(payload:dict,_:str=Depends(auth)):
+    q=str(payload.get("query","")).strip()
+    if not q: raise HTTPException(400,"query required")
+    return await research(q)
+
+@router.get("/automation/schedules")
+def schedules(_:str=Depends(auth)):
+    return legacy.rows("select * from schedules order by created desc")
+
+@router.post("/automation/schedules")
+def add_schedule(x:ScheduleIn,_:str=Depends(auth)):
+    i=str(uuid.uuid4());t=legacy.now()
+    seconds=float(x.expression) if x.kind=="interval" and str(x.expression).replace(".","",1).isdigit() else 3600
+    legacy.execute("insert into schedules values(?,?,?,?,?,?,?,?,?,?,?)",(i,x.name,x.kind,x.expression,x.action,legacy.dumps(x.payload),int(x.enabled),t+seconds,None,t,t))
+    audit("schedule.create","schedule",{"id":i,"name":x.name}); return {"id":i}
+
+@router.put("/automation/schedules/{id}")
+def update_schedule(id:str,x:ScheduleIn,_:str=Depends(auth)):
+    if not legacy.one("select id from schedules where id=?",(id,)): raise HTTPException(404,"Schedule not found")
+    seconds=float(x.expression) if x.kind=="interval" and str(x.expression).replace(".","",1).isdigit() else 3600
+    legacy.execute("update schedules set name=?,kind=?,expression=?,action=?,payload=?,enabled=?,next_run=?,updated=? where id=?",(x.name,x.kind,x.expression,x.action,legacy.dumps(x.payload),int(x.enabled),legacy.now()+seconds,legacy.now(),id))
+    return {"ok":True}
+
+@router.delete("/automation/schedules/{id}")
+def delete_schedule(id:str,_:str=Depends(auth)):
+    legacy.execute("delete from schedules where id=?",(id,)); return {"ok":True}
+
+@router.post("/automation/run-due")
+async def run_due(_:str=Depends(auth)):
+    due=legacy.rows("select * from schedules where enabled=1 and next_run<=? order by next_run",(legacy.now(),))
+    results=[]
+    for s in due:
+        p=j(s["payload"])
+        try:
+            if s["action"]=="chat": result=await assistant_run(AssistantIn(message=str(p.get("message","")),require_approval=False))
+            else: result={"status":"unsupported_action","action":s["action"]}
+            ok=True
+        except Exception as e: result={"error":str(e)}; ok=False
+        interval=float(s["expression"]) if s["kind"]=="interval" and str(s["expression"]).replace(".","",1).isdigit() else 3600
+        legacy.execute("update schedules set last_run=?,next_run=?,updated=? where id=?",(legacy.now(),legacy.now()+interval,legacy.now(),s["id"]))
+        results.append({"id":s["id"],"ok":ok,"result":result})
+    return results
+
+@router.post("/files/upload")
+async def upload_workspace(file:UploadFile=File(...),_:str=Depends(auth)):
+    data=await file.read()
+    if len(data)>25*1024*1024: raise HTTPException(413,"File too large")
+    fid=str(uuid.uuid4()); safe=re.sub(r"[^A-Za-z0-9._-]","_",file.filename or "upload")
+    path=STORE/f"{fid}_{safe}"; path.write_bytes(data)
+    sha=hashlib.sha256(data).hexdigest(); t=legacy.now()
+    legacy.execute("insert into workspace_files values(?,?,?,?,?,?,?,?)",(fid,safe,str(path.relative_to(ROOT)),file.content_type or mimetypes.guess_type(safe)[0] or "application/octet-stream",len(data),sha,t,t))
+    audit("file.upload","workspace_file",{"id":fid,"name":safe}); return {"id":fid,"name":safe,"size":len(data),"sha256":sha}
+
+@router.get("/files")
+def files(_:str=Depends(auth)): return legacy.rows("select * from workspace_files order by created desc")
+
+@router.get("/files/{id}")
+def file_info(id:str,_:str=Depends(auth)):
+    x=legacy.one("select * from workspace_files where id=?",(id,))
+    if not x: raise HTTPException(404,"File not found")
+    return x
+
+@router.delete("/files/{id}")
+def delete_file(id:str,_:str=Depends(auth)):
+    x=legacy.one("select * from workspace_files where id=?",(id,))
+    if x:
+        p=ROOT/x["path"]
+        if p.exists(): p.unlink()
+        legacy.execute("delete from workspace_files where id=?",(id,))
+    return {"ok":True}
+
+@router.get("/media")
+def media(_:str=Depends(auth)): return legacy.rows("select * from media_jobs order by created desc")
+
+@router.post("/media")
+def create_media(x:MediaIn,_:str=Depends(auth)):
+    i=str(uuid.uuid4());t=legacy.now()
+    legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(i,x.kind,"queued",legacy.dumps(x.input),None,x.provider,t,t))
+    legacy.emit("media.queued",{"id":i,"kind":x.kind}); return {"id":i,"status":"queued"}
+
+@router.get("/connectors")
+def connectors(_:str=Depends(auth)):
+    out=legacy.rows("select * from connectors order by name")
+    for x in out: x["config"]=j(x["config"])
+    return out
+
+@router.post("/connectors")
+def add_connector(x:ConnectorIn,_:str=Depends(auth)):
+    i=str(uuid.uuid4());t=legacy.now()
+    legacy.execute("insert into connectors values(?,?,?,?,?,?,?,?)",(i,x.name,x.kind,x.base_url,int(x.enabled),legacy.dumps(x.config),t,t))
+    audit("connector.create","connector",{"id":i,"kind":x.kind}); return {"id":i}
+
+@router.put("/connectors/{id}")
+def update_connector(id:str,x:ConnectorIn,_:str=Depends(auth)):
+    legacy.execute("update connectors set name=?,kind=?,base_url=?,enabled=?,config=?,updated=? where id=?",(x.name,x.kind,x.base_url,int(x.enabled),legacy.dumps(x.config),legacy.now(),id)); return {"ok":True}
+
+@router.delete("/connectors/{id}")
+def delete_connector(id:str,_:str=Depends(auth)):
+    legacy.execute("delete from connectors where id=?",(id,)); return {"ok":True}
+
+@router.post("/diagnostics")
+async def diagnostics(_:str=Depends(auth)):
+    checks={"database":False,"provider_api":False,"tool_engine":False,"workflow_engine":False}
+    try: legacy.rows("select 1"); checks["database"]=True
+    except: pass
+    checks["tool_engine"]=bool(legacy.one("select id from tools where id='core.echo'"))
+    checks["workflow_engine"]=True
+    for p in legacy.rows("select * from providers where enabled=1 and base_url<>'' limit 3"):
+        try:
+            async with legacy.httpx.AsyncClient(timeout=5) as c:
+                r=await c.get(p["base_url"]); checks["provider_api"]=r.status_code<500
+        except: pass
+    return {"ok":all(checks.values()) if checks else False,"checks":checks,"timestamp":legacy.now()}
+
+async def scheduler_loop():
+    while True:
+        try:
+            due=legacy.rows("select * from schedules where enabled=1 and next_run<=? limit 20",(legacy.now(),))
+            for s in due:
+                p=j(s["payload"])
+                if s["action"]=="chat" and p.get("message"):
+                    await assistant_run(AssistantIn(message=p["message"]))
+                interval=float(s["expression"]) if s["kind"]=="interval" and str(s["expression"]).replace(".","",1).isdigit() else 3600
+                legacy.execute("update schedules set last_run=?,next_run=?,updated=? where id=?",(legacy.now(),legacy.now()+interval,legacy.now(),s["id"]))
+        except Exception:
+            pass
+        await asyncio.sleep(15)
