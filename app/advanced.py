@@ -322,3 +322,173 @@ async def scheduler_loop():
         except Exception:
             pass
         await asyncio.sleep(15)
+
+
+# ---- Extended intelligence adapters: document parsing, semantic memory, research, agents, GitHub ----
+def _tokens(text):
+    return set(re.findall(r"[A-Za-z0-9\u0900-\u097F]{3,}", (text or "").lower()))
+
+def _semantic_score(query, text):
+    q=_tokens(query); t=_tokens(text)
+    if not q or not t: return 0.0
+    return len(q&t)/max(1,len(q))
+
+@router.get("/memory/semantic")
+def semantic_memory(q:str="",limit:int=20,_:str=Depends(auth)):
+    data=legacy.rows("select * from memories order by created desc limit 1000")
+    ranked=sorted(data,key=lambda x:_semantic_score(q,x.get("content","")),reverse=True)
+    return [{"id":x["id"],"scope":x["scope"],"content":x["content"],"metadata":j(x["metadata"]),"score":round(_semantic_score(q,x.get("content","")),4)} for x in ranked[:min(limit,100)]]
+
+@router.post("/agents/{id}/run")
+async def run_agent(id:str,payload:dict,_:str=Depends(auth)):
+    agent=legacy.one("select * from agents where id=? and enabled=1",(id,))
+    if not agent: raise HTTPException(404,"Agent not found or disabled")
+    message=str(payload.get("message","")).strip()
+    if not message: raise HTTPException(400,"message required")
+    max_steps=min(int(payload.get("max_steps",5)),10)
+    rid=str(uuid.uuid4()); trace("Understanding",rid,{"agent_id":id})
+    history=[]; current=message
+    for step in range(max_steps):
+        intent=classify(current); trace("Planning",rid,{"step":step+1,"intent":intent})
+        if intent=="tool":
+            expr=re.sub(r"^(please\s+)?(calculate|compute)\s+","",current,flags=re.I)
+            result=await legacy.execute_tool_internal("core.calculator",{"expression":expr})
+            history.append({"step":step+1,"action":"calculator","result":result})
+            trace("Verifying",rid,{"step":step+1})
+            break
+        answer,provider=await legacy.provider_chat(current,agent["model_id"])
+        if answer is None:
+            answer="Local agent result: "+current
+            provider="local"
+        history.append({"step":step+1,"action":"model","provider":provider,"answer":answer})
+        break
+    trace("Complete",rid,{"steps":len(history)})
+    return {"request_id":rid,"agent_id":id,"state":"Complete","steps":history}
+
+async def _extract_bytes(name,data,mime):
+    ext=Path(name).suffix.lower()
+    if ext in {".txt",".md",".csv",".json",".html",".htm",".xml",".log"} or mime.startswith("text/"):
+        return data.decode("utf-8","ignore")
+    if ext==".pdf":
+        try:
+            from pypdf import PdfReader
+            import io
+            return "\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(data)).pages)
+        except Exception as e:
+            return "[PDF extraction unavailable: %s]"%e
+    if ext==".docx":
+        try:
+            from docx import Document
+            import io
+            return "\n".join(p.text for p in Document(io.BytesIO(data)).paragraphs)
+        except Exception as e:
+            return "[DOCX extraction unavailable: %s]"%e
+    if ext==".xlsx":
+        try:
+            from openpyxl import load_workbook
+            import io
+            wb=load_workbook(io.BytesIO(data),read_only=True,data_only=True)
+            out=[]
+            for ws in wb.worksheets:
+                out.append("## "+ws.title)
+                for row in ws.iter_rows(values_only=True):
+                    out.append(" | ".join("" if v is None else str(v) for v in row))
+            return "\n".join(out)
+        except Exception as e:
+            return "[XLSX extraction unavailable: %s]"%e
+    return ""
+
+@router.get("/files/{id}/text")
+def file_text(id:str,_:str=Depends(auth)):
+    x=legacy.one("select * from workspace_files where id=?",(id,))
+    if not x: raise HTTPException(404,"File not found")
+    p=ROOT/x["path"]
+    if not p.exists(): raise HTTPException(404,"File bytes missing")
+    text=_extract_bytes(x["name"],p.read_bytes(),x["mime"])
+    if hasattr(text,"__await__"): text=asyncio.run(text)
+    return {"id":id,"name":x["name"],"text":text[:100000]}
+
+@router.post("/files/{id}/index")
+def index_file(id:str,_:str=Depends(auth)):
+    x=legacy.one("select * from workspace_files where id=?",(id,))
+    if not x: raise HTTPException(404,"File not found")
+    p=ROOT/x["path"]
+    if not p.exists(): raise HTTPException(404,"File bytes missing")
+    raw=p.read_bytes()
+    ext=Path(x["name"]).suffix.lower()
+    text=""
+    if ext in {".txt",".md",".csv",".json",".html",".htm",".xml",".log"} or x["mime"].startswith("text/"):
+        text=raw.decode("utf-8","ignore")
+    else:
+        try:
+            import io
+            if ext==".pdf":
+                from pypdf import PdfReader
+                text="\n".join(page.extract_text() or "" for page in PdfReader(io.BytesIO(raw)).pages)
+            elif ext==".docx":
+                from docx import Document
+                text="\n".join(p.text for p in Document(io.BytesIO(raw)).paragraphs)
+            elif ext==".xlsx":
+                from openpyxl import load_workbook
+                wb=load_workbook(io.BytesIO(raw),read_only=True,data_only=True)
+                text="\n".join(" | ".join("" if v is None else str(v) for v in row) for ws in wb.worksheets for row in ws.iter_rows(values_only=True))
+        except Exception as e: text=""
+    memory_id=str(uuid.uuid4()); t=legacy.now()
+    legacy.execute("insert into memories values(?,?,?,?,?)",(memory_id,"file:"+id,text[:100000],legacy.dumps({"file_id":id,"name":x["name"]}),t))
+    legacy.execute("insert or replace into memory_index values(?,?,?,?,?)",(str(uuid.uuid4()),memory_id,legacy.dumps(list(_tokens(text))),hashlib.sha256(text.encode()).hexdigest(),t))
+    return {"ok":True,"memory_id":memory_id,"characters":len(text)}
+
+@router.get("/research/search")
+async def web_search(q:str,limit:int=5,_:str=Depends(auth)):
+    if not q.strip(): raise HTTPException(400,"q required")
+    url="https://html.duckduckgo.com/html/"
+    try:
+        async with legacy.httpx.AsyncClient(timeout=15,headers={"User-Agent":"RAYONE-AI/2.0"}) as c:
+            r=await c.get(url,params={"q":q})
+            body=r.text
+        hits=[]
+        for m in re.finditer(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',body,re.S|re.I):
+            href=re.sub("<.*?>","",m.group(1)); title=re.sub("<.*?>","",m.group(2))
+            hits.append({"title":title,"url":href})
+            if len(hits)>=min(limit,10): break
+        metric("research.search")
+        return {"query":q,"results":hits,"source":"duckduckgo-html"}
+    except Exception as e:
+        return {"query":q,"results":[],"error":str(e)}
+
+def _gh_headers():
+    h={"Accept":"application/vnd.github+json","X-GitHub-Api-Version":"2026-03-10"}
+    tok=os.getenv("GITHUB_TOKEN","")
+    if tok: h["Authorization"]="Bearer "+tok
+    return h
+
+def _gh_allowed(path):
+    return bool(re.match(r"^/repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[^?]*)?$",path))
+
+@router.get("/github/status")
+async def github_status(_:str=Depends(auth)):
+    tok=bool(os.getenv("GITHUB_TOKEN"))
+    if not tok: return {"configured":False,"message":"Set GITHUB_TOKEN to enable authenticated GitHub control."}
+    try:
+        async with legacy.httpx.AsyncClient(timeout=10) as c:
+            r=await c.get("https://api.github.com/user",headers=_gh_headers())
+            return {"configured":True,"ok":r.status_code==200,"status":r.status_code,"user":r.json().get("login") if r.status_code==200 else None}
+    except Exception as e: return {"configured":True,"ok":False,"error":str(e)}
+
+@router.post("/github/request")
+async def github_request(payload:dict,_:str=Depends(auth)):
+    method=str(payload.get("method","GET")).upper()
+    path=str(payload.get("path",""))
+    if method not in {"GET","POST","PATCH","DELETE"} or not _gh_allowed(path):
+        raise HTTPException(400,"Only GitHub repository API paths are allowed")
+    if method!="GET":
+        aid=str(uuid.uuid4()); t=legacy.now()
+        legacy.execute("insert into approvals values(?,?,?,?,?,?,?)",(aid,"github."+method,path,legacy.dumps(payload),"pending",t,None))
+        return {"status":"Awaiting Approval","approval_id":aid}
+    tok=os.getenv("GITHUB_TOKEN")
+    if not tok: raise HTTPException(503,"GITHUB_TOKEN is not configured")
+    try:
+        async with legacy.httpx.AsyncClient(timeout=20) as c:
+            r=await c.get("https://api.github.com"+path,headers=_gh_headers())
+            return {"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
+    except Exception as e: raise HTTPException(502,str(e))
