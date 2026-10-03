@@ -33,3 +33,19 @@ def test_chat():
 
 def test_project_crud():
     t=token();r=client.post('/api/projects',headers=h(t),json={'name':'Test'});assert r.status_code==200
+
+
+def test_v2_status_and_assistant():
+    t=token()
+    h2=h(t)
+    s=client.get('/api/v2/status',headers=h2)
+    assert s.status_code==200 and s.json()['core']=='online'
+    a=client.post('/api/v2/assistant/chat',headers={**h2,'Content-Type':'application/json'},json={'message':'calculate 2+2'})
+    assert a.status_code==200 and a.json()['result']==4
+
+def test_v2_permissions_and_schedule():
+    t=token(); hh=h(t)
+    p=client.post('/api/v2/permissions',headers={**hh,'Content-Type':'application/json'},json={'capability':'tool.execute','scope':'core'})
+    assert p.status_code==200
+    s=client.post('/api/v2/automation/schedules',headers={**hh,'Content-Type':'application/json'},json={'name':'test','expression':'3600','action':'chat','payload':{'message':'hello'}})
+    assert s.status_code==200
