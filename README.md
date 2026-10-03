@@ -50,3 +50,39 @@ For internet exposure, put RAYONE behind HTTPS and a trusted reverse proxy, use 
 ## Android
 
 The REST API is mobile-client friendly. An Android client can authenticate at `/api/auth/login` and consume the same `/api/*` endpoints. This release does not bundle a native Android application.
+
+
+## RAYONE v2 control plane
+
+The current release also exposes a versioned universal control plane under `/api/v2/*` and a replacement command-center dashboard.
+
+### Execution architecture
+
+```
+User → Auth → RAYONE Core → Context/Memory → Intent/Planner → Router
+     → Model / Tool / Agent / Workflow / Research / Media
+     → VORQYON verification → Result → Trace / Audit / Metrics
+     → Checkpoint / Recovery
+```
+
+The v2 layer provides:
+- explicit RAYONE state traces and execution IDs
+- permission records and consequential-action approval queue
+- assistant streaming endpoint
+- agent execution loop with bounded steps
+- semantic-lite memory ranking plus file indexing
+- TXT/MD/CSV/JSON/HTML/XML, PDF, DOCX and XLSX extraction
+- scheduled interval automation
+- workspace file registry
+- media job contract for image/video/audio/voice/music adapters
+- connector registry
+- web research/search adapter
+- optional GitHub repository adapter using `GITHUB_TOKEN`
+- diagnostics, metrics and observability endpoints
+- responsive universal command-center dashboard
+
+External services are intentionally adapter-based: RAYONE does not fabricate a provider or connector that has not been configured. Credentials remain server-side.
+
+## Zero-cost/local-first rule
+
+The core platform does not require a paid AI provider. It can run locally with deterministic tools and local fallback behavior. External AI, media, messaging or cloud connectors become active only when their corresponding provider/credential is configured.
