@@ -113,12 +113,26 @@ def approvals(_:str=Depends(auth)):
     return legacy.rows("select * from approvals order by created desc limit 200")
 
 @router.post("/approvals/{id}")
-def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
+async def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
     if x.decision not in {"approved","rejected"}: raise HTTPException(400,"decision must be approved or rejected")
-    if not legacy.one("select id from approvals where id=?",(id,)): raise HTTPException(404,"Approval not found")
+    item=legacy.one("select * from approvals where id=?",(id,))
+    if not item: raise HTTPException(404,"Approval not found")
+    if item["status"]!="pending": raise HTTPException(409,"Approval already decided")
+    result=None
+    if x.decision=="approved" and item["action"].startswith("github."):
+        payload=j(item["payload"]); method=item["action"].split(".",1)[1]
+        path=str(payload.get("path",""))
+        if not _gh_allowed(path): raise HTTPException(400,"GitHub path not allowed")
+        if not os.getenv("GITHUB_TOKEN"): raise HTTPException(503,"GITHUB_TOKEN is not configured")
+        headers=_gh_headers()
+        body=payload.get("body") or {}
+        async with legacy.httpx.AsyncClient(timeout=30) as c:
+            r=await c.request(method,"https://api.github.com"+path,headers=headers,json=body)
+            result={"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
+            if r.status_code>=400: raise HTTPException(r.status_code,"GitHub request failed: "+r.text[:2000])
     legacy.execute("update approvals set status=?,decided=? where id=?",(x.decision,legacy.now(),id))
-    audit("approval."+x.decision,"approval",{"id":id})
-    return {"ok":True,"status":x.decision}
+    audit("approval."+x.decision,"approval",{"id":id,"result":result})
+    return {"ok":True,"status":x.decision,"result":result}
 
 def classify(message):
     m=message.lower().strip()
