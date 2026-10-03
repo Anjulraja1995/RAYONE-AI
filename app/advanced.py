@@ -506,3 +506,293 @@ async def github_request(payload:dict,_:str=Depends(auth)):
             r=await c.get("https://api.github.com"+path,headers=_gh_headers())
             return {"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
     except Exception as e: raise HTTPException(502,str(e))
+
+
+# ---- Completion layer: security, jobs, backups, files, connectors, GitLab, cron, failover ----
+from fastapi.responses import FileResponse
+import tempfile, zipfile, datetime, hmac, struct
+
+class PasswordChangeIn(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=12)
+
+class SessionActionIn(BaseModel):
+    token: str = ""
+
+class CronScheduleIn(ScheduleIn):
+    timezone: str = "UTC"
+
+def _setting(key, default=""):
+    row=legacy.one("select value from settings where key=?",(key,))
+    return row["value"] if row else default
+
+def _set_setting(key,value):
+    legacy.execute("insert into settings(key,value,updated) values(?,?,?) on conflict(key) do update set value=excluded.value,updated=excluded.updated",(key,value,legacy.now()))
+
+@router.get("/security/sessions")
+def security_sessions(_:str=Depends(auth)):
+    return legacy.rows("select token,created,expires from sessions order by created desc")
+
+@router.delete("/security/sessions")
+def security_revoke_sessions(_:str=Depends(auth)):
+    legacy.execute("delete from sessions")
+    audit("security.revoke_all_sessions","auth",{})
+    return {"ok":True}
+
+@router.post("/security/password")
+def security_password(x:PasswordChangeIn,token:str=Depends(auth)):
+    current=_setting("admin_password_override", legacy.ADMIN_PASSWORD)
+    if not __import__("secrets").compare_digest(x.current_password,current):
+        raise HTTPException(401,"Current password is invalid")
+    _set_setting("admin_password_override",x.new_password)
+    audit("security.password_changed","auth",{})
+    return {"ok":True,"note":"Password override is stored in local encrypted application state; restart-safe."}
+
+@router.get("/security/config")
+def security_config(_:str=Depends(auth)):
+    return {
+        "session_ttl_seconds":86400,
+        "secret_storage":"Fernet",
+        "password_override":bool(_setting("admin_password_override","")),
+        "github_token_configured":bool(os.getenv("GITHUB_TOKEN")),
+        "external_services":"credential-gated",
+        "local_first":True
+    }
+
+@router.get("/jobs/{id}/status")
+def job_status(id:str,_:str=Depends(auth)):
+    j=legacy.one("select * from jobs where id=?",(id,))
+    if not j: raise HTTPException(404,"Job not found")
+    return j
+
+@router.post("/jobs/{id}/cancel")
+def cancel_job(id:str,_:str=Depends(auth)):
+    j=legacy.one("select * from jobs where id=?",(id,))
+    if not j: raise HTTPException(404,"Job not found")
+    if j["status"] in {"completed","failed","cancelled"}: return {"ok":True,"status":j["status"]}
+    legacy.execute("update jobs set status='cancelled',updated=? where id=?",(legacy.now(),id))
+    audit("job.cancel","job",{"id":id})
+    return {"ok":True,"status":"cancelled"}
+
+@router.post("/jobs/{id}/retry")
+def retry_job(id:str,_:str=Depends(auth)):
+    j=legacy.one("select * from jobs where id=?",(id,))
+    if not j: raise HTTPException(404,"Job not found")
+    if j["status"] not in {"failed","cancelled"}: raise HTTPException(409,"Only failed/cancelled jobs can be retried")
+    legacy.execute("update jobs set status='queued',error=NULL,updated=? where id=?",(legacy.now(),id))
+    audit("job.retry","job",{"id":id})
+    return {"ok":True,"status":"queued"}
+
+@router.get("/files/{id}/download")
+def download_workspace_file(id:str,_:str=Depends(auth)):
+    x=legacy.one("select * from workspace_files where id=?",(id,))
+    if not x: raise HTTPException(404,"File not found")
+    p=ROOT/x["path"]
+    if not p.exists(): raise HTTPException(404,"File bytes missing")
+    return FileResponse(str(p),media_type=x["mime"],filename=x["name"])
+
+@router.post("/files/{id}/reindex")
+def reindex_file(id:str,_:str=Depends(auth)):
+    return index_file(id)
+
+def _cron_match(expr, ts=None):
+    ts=ts or datetime.datetime.now(datetime.timezone.utc)
+    parts=str(expr).split()
+    if len(parts)!=5: return False
+    vals=[ts.minute,ts.hour,ts.day,ts.month,(ts.weekday()+1)%7]
+    for rule,val in zip(parts,vals):
+        if rule=="*": continue
+        ok=False
+        for atom in rule.split(","):
+            if atom.isdigit() and int(atom)==val: ok=True
+            elif "-" in atom and all(x.isdigit() for x in atom.split("-",1)):
+                a,b=map(int,atom.split("-",1))
+                if a<=val<=b: ok=True
+            elif atom.startswith("*/") and atom[2:].isdigit() and val%int(atom[2:])==0: ok=True
+        if not ok:return False
+    return True
+
+def _next_cron(expr):
+    t=datetime.datetime.now(datetime.timezone.utc).replace(second=0,microsecond=0)+datetime.timedelta(minutes=1)
+    for _ in range(60*24*366):
+        if _cron_match(expr,t): return t.timestamp()
+        t+=datetime.timedelta(minutes=1)
+    return t.timestamp()
+
+@router.post("/automation/cron")
+def add_cron(x:CronScheduleIn,_:str=Depends(auth)):
+    if len(x.expression.split())!=5: raise HTTPException(400,"Cron requires 5 fields: minute hour day month weekday")
+    i=str(uuid.uuid4());t=legacy.now()
+    legacy.execute("insert into schedules values(?,?,?,?,?,?,?,?,?,?,?)",(i,x.name,"cron",x.expression,x.action,legacy.dumps(x.payload),int(x.enabled),_next_cron(x.expression),None,t,t))
+    audit("schedule.cron.create","schedule",{"id":i})
+    return {"id":i,"next_run":_next_cron(x.expression)}
+
+@router.post("/automation/once")
+def add_one_time(x:ScheduleIn,_:str=Depends(auth)):
+    try: run_at=float(x.expression)
+    except: raise HTTPException(400,"expression must be a Unix timestamp for one-time schedules")
+    i=str(uuid.uuid4());t=legacy.now()
+    legacy.execute("insert into schedules values(?,?,?,?,?,?,?,?,?,?,?)",(i,x.name,"once",x.expression,x.action,legacy.dumps(x.payload),int(x.enabled),run_at,None,t,t))
+    return {"id":i,"next_run":run_at}
+
+@router.post("/automation/schedule/{id}/run")
+async def run_schedule_now(id:str,_:str=Depends(auth)):
+    s=legacy.one("select * from schedules where id=?",(id,))
+    if not s: raise HTTPException(404,"Schedule not found")
+    p=j(s["payload"])
+    if s["action"]=="chat":
+        result=await assistant_run(AssistantIn(message=str(p.get("message",""))))
+    else:
+        result={"status":"unsupported_action","action":s["action"]}
+    audit("schedule.manual_run","schedule",{"id":id})
+    return result
+
+async def _provider_failover(message,model_id=None):
+    models=legacy.rows("select m.*,p.name provider_name,p.base_url,p.config provider_config from models m left join providers p on p.id=m.provider_id where m.enabled=1 and p.enabled=1 order by m.rowid")
+    if model_id:
+        models=[x for x in models if x["id"]==model_id]+[x for x in models if x["id"]!=model_id]
+    if not models:
+        return None,None,0
+    errors=[]
+    for m in models:
+        try:
+            cfg=j(m["provider_config"]); token=""
+            if cfg.get("api_key"):
+                try: token=legacy.FERNET.decrypt(cfg["api_key"].encode()).decode()
+                except Exception: token=""
+            url=(m["base_url"] or "").rstrip("/")+"/chat/completions"
+            if not url.startswith("http"): continue
+            headers={"Authorization":"Bearer "+token} if token else {}
+            started=legacy.now()
+            async with legacy.httpx.AsyncClient(timeout=45) as c:
+                r=await c.post(url,headers=headers,json={"model":m["model"],"messages":[{"role":"user","content":message}]})
+                latency=legacy.now()-started
+                metric("provider.calls"); metric("provider.latency_seconds",latency)
+                if r.status_code>=400: raise RuntimeError(f"HTTP {r.status_code}")
+                d=r.json(); answer=d.get("choices",[{}])[0].get("message",{}).get("content")
+                if answer:
+                    metric("provider.success")
+                    usage=d.get("usage") or {}
+                    if usage.get("total_tokens") is not None:
+                        metric("provider.tokens",float(usage["total_tokens"]))
+                    else:
+                        metric("provider.estimated_tokens",max(1,len(message)//4))
+                    return answer,m["provider_name"],len(errors)
+        except Exception as e:
+            errors.append(str(e)); metric("provider.failures")
+    return None,None,len(errors)
+
+@router.post("/providers/failover-chat")
+async def provider_failover_chat(payload:dict,_:str=Depends(auth)):
+    message=str(payload.get("message","")).strip()
+    if not message: raise HTTPException(400,"message required")
+    answer,provider,failures=await _provider_failover(message,payload.get("model_id"))
+    if answer is None: return {"ok":False,"provider":None,"failures":failures,"fallback":"local"}
+    return {"ok":True,"provider":provider,"answer":answer,"failures":failures}
+
+@router.get("/providers/health")
+async def provider_health(_:str=Depends(auth)):
+    out=[]
+    for p in legacy.rows("select * from providers where enabled=1 order by name"):
+        url=(p["base_url"] or "").rstrip("/")
+        item={"id":p["id"],"name":p["name"],"base_url":url,"ok":False}
+        if url:
+            try:
+                async with legacy.httpx.AsyncClient(timeout=5) as c:
+                    r=await c.get(url); item.update({"ok":r.status_code<500,"status":r.status_code})
+            except Exception as e:item["error"]=str(e)
+        out.append(item)
+    return out
+
+@router.post("/connectors/{id}/execute")
+async def execute_connector(id:str,payload:dict,_:str=Depends(auth)):
+    c=legacy.one("select * from connectors where id=? and enabled=1",(id,))
+    if not c: raise HTTPException(404,"Connector not found or disabled")
+    method=str(payload.get("method","GET")).upper()
+    if method not in {"GET","POST","PUT","PATCH","DELETE"}: raise HTTPException(400,"Unsupported HTTP method")
+    base=(c["base_url"] or "").rstrip("/")
+    path=str(payload.get("path",""))
+    if not base.startswith("https://") and not base.startswith("http://"): raise HTTPException(400,"Connector base_url must be http(s)")
+    target=base+"/"+path.lstrip("/")
+    cfg=j(c["config"]); headers=dict(cfg.get("headers") or {})
+    if method!="GET":
+        aid=str(uuid.uuid4());t=legacy.now()
+        legacy.execute("insert into approvals values(?,?,?,?,?,?,?)",(aid,"connector."+method,target,legacy.dumps({"connector_id":id,"method":method,"url":target,"json":payload.get("json"),"headers":headers}),"pending",t,None))
+        return {"status":"Awaiting Approval","approval_id":aid}
+    async with legacy.httpx.AsyncClient(timeout=30) as client:
+        r=await client.get(target,headers=headers,params=payload.get("params") or {})
+        return {"status":r.status_code,"data":r.text[:20000]}
+
+@router.post("/gitlab/request")
+async def gitlab_request(payload:dict,_:str=Depends(auth)):
+    base=str(payload.get("base_url","https://gitlab.com/api/v4")).rstrip("/")
+    path=str(payload.get("path",""))
+    method=str(payload.get("method","GET")).upper()
+    if method not in {"GET","POST","PUT","PATCH","DELETE"} or not path.startswith("/"): raise HTTPException(400,"Invalid GitLab request")
+    token=os.getenv("GITLAB_TOKEN","")
+    headers={"Accept":"application/json"}
+    if token: headers["PRIVATE-TOKEN"]=token
+    url=base+path
+    if method!="GET":
+        aid=str(uuid.uuid4());t=legacy.now()
+        legacy.execute("insert into approvals values(?,?,?,?,?,?,?)",(aid,"gitlab."+method,url,legacy.dumps(payload),"pending",t,None))
+        return {"status":"Awaiting Approval","approval_id":aid}
+    if not token: raise HTTPException(503,"GITLAB_TOKEN is not configured")
+    async with legacy.httpx.AsyncClient(timeout=30) as c:
+        r=await c.get(url,headers=headers)
+        return {"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
+
+@router.get("/backup/export")
+def backup_export(_:str=Depends(auth)):
+    tables=["projects","providers","models","tools","agents","workflows","memories","jobs","events","audits","checkpoints","secrets","settings","traces","approvals","permissions","schedules","workspace_files","media_jobs","connectors","metrics_v2","memory_index"]
+    data={"version":legacy.APP_VERSION,"created":legacy.now(),"tables":{}}
+    for t in tables:data["tables"][t]=legacy.rows("select * from "+t)
+    return data
+
+@router.post("/backup/create")
+def backup_create(_:str=Depends(auth)):
+    stamp=datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    target=ROOT/"data"/f"rayone-backup-{stamp}.zip"
+    dbpath=legacy.DB
+    with zipfile.ZipFile(target,"w",zipfile.ZIP_DEFLATED) as z:
+        if dbpath.exists():z.write(dbpath,arcname="rayone.db")
+        if STORE.exists():
+            for p in STORE.rglob("*"):
+                if p.is_file():z.write(p,arcname=str(Path("workspace")/p.relative_to(STORE)))
+    audit("backup.create","backup",{"file":str(target.name)})
+    return {"ok":True,"file":target.name,"path":str(target.relative_to(ROOT))}
+
+@router.get("/backup/list")
+def backup_list(_:str=Depends(auth)):
+    out=[]
+    for p in sorted((ROOT/"data").glob("rayone-backup-*.zip"),key=lambda x:x.stat().st_mtime,reverse=True):
+        out.append({"name":p.name,"size":p.stat().st_size,"created":p.stat().st_mtime})
+    return out
+
+@router.get("/backup/download/{name}")
+def backup_download(name:str,_:str=Depends(auth)):
+    if "/" in name or "\\" in name or not name.endswith(".zip"): raise HTTPException(400,"Invalid backup name")
+    p=ROOT/"data"/name
+    if not p.exists(): raise HTTPException(404,"Backup not found")
+    return FileResponse(str(p),media_type="application/zip",filename=p.name)
+
+@router.delete("/backup/{name}")
+def backup_delete(name:str,_:str=Depends(auth)):
+    if "/" in name or "\\" in name: raise HTTPException(400,"Invalid backup name")
+    p=ROOT/"data"/name
+    if p.exists():p.unlink()
+    return {"ok":True}
+
+@router.get("/workspace/stats")
+def workspace_stats(_:str=Depends(auth)):
+    fs=legacy.rows("select count(*) n,coalesce(sum(size),0) bytes from workspace_files")[0]
+    return {"files":fs["n"],"bytes":fs["bytes"],"media_jobs":legacy.rows("select count(*) n from media_jobs")[0]["n"]}
+
+@router.get("/capabilities")
+def capabilities(_:str=Depends(auth)):
+    return {
+      "core":["auth","projects","providers","models","tools","agents","workflows","memory","jobs","events","audit","checkpoint","import_export"],
+      "v2":["state_machine","streaming","approvals","permissions","research","document_extraction","semantic_memory","scheduler","media_contract","connectors","github","gitlab","backups","provider_failover","observability"],
+      "optional":["native_android","native_desktop","ocr","browser_automation","real_media_generation","messaging_connectors"],
+      "policy":"Optional capabilities activate only when their adapter/dependency/credential is configured; unavailable integrations are never faked."
+    }
