@@ -86,3 +86,24 @@ External services are intentionally adapter-based: RAYONE does not fabricate a p
 ## Zero-cost/local-first rule
 
 The core platform does not require a paid AI provider. It can run locally with deterministic tools and local fallback behavior. External AI, media, messaging or cloud connectors become active only when their corresponding provider/credential is configured.
+
+
+## Completion-layer capabilities
+
+The control plane also includes:
+- job cancellation and retry
+- provider health checks and ordered failover
+- interval, cron and one-time scheduling
+- workspace file download/re-index and size statistics
+- backup creation/list/download/delete
+- security session inspection/revocation and persisted password override
+- generic credential-gated connector execution with approval for mutations
+- GitLab read/control adapter with approval-gated mutations
+- capability reporting
+- browser speech recognition plus speech synthesis in the web dashboard
+- a zero-cost Android REST client shell under `android/`
+- an optional Electron desktop shell under `desktop/`
+
+### Native/External adapter boundary
+
+RAYONE exposes real adapter contracts for capabilities that require an external runtime, credential, model, browser binary or media engine. It does not pretend those services are active when they are not configured. This keeps the local-first core functional while allowing production adapters to be attached without changing the control plane.
