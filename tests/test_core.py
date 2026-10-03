@@ -49,3 +49,28 @@ def test_v2_permissions_and_schedule():
     assert p.status_code==200
     s=client.post('/api/v2/automation/schedules',headers={**hh,'Content-Type':'application/json'},json={'name':'test','expression':'3600','action':'chat','payload':{'message':'hello'}})
     assert s.status_code==200
+
+
+def test_v2_capabilities_and_backup():
+    t=token(); hh=h(t)
+    c=client.get('/api/v2/capabilities',headers=hh)
+    assert c.status_code==200 and 'provider_failover' in c.json()['v2']
+    b=client.get('/api/v2/backup/export',headers=hh)
+    assert b.status_code==200 and 'tables' in b.json()
+
+def test_v2_job_cancel_retry_and_workspace_stats():
+    t=token(); hh=h(t)
+    j=client.post('/api/jobs',headers={**hh,'Content-Type':'application/json'},json={'type':'unknown','input':{}})
+    assert j.status_code==200
+    jid=j.json()['id']
+    c=client.post('/api/v2/jobs/'+jid+'/cancel',headers=hh)
+    assert c.status_code==200 and c.json()['status']=='cancelled'
+    r=client.post('/api/v2/jobs/'+jid+'/retry',headers=hh)
+    assert r.status_code==200 and r.json()['status']=='queued'
+    s=client.get('/api/v2/workspace/stats',headers=hh)
+    assert s.status_code==200 and 'files' in s.json()
+
+def test_v2_cron_validation():
+    t=token(); hh=h(t)
+    r=client.post('/api/v2/automation/cron',headers={**hh,'Content-Type':'application/json'},json={'name':'cron-test','expression':'* * * * *','action':'chat','payload':{'message':'hello'}})
+    assert r.status_code==200 and 'next_run' in r.json()
