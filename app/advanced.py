@@ -796,3 +796,28 @@ def capabilities(_:str=Depends(auth)):
       "optional":["native_android","native_desktop","ocr","browser_automation","real_media_generation","messaging_connectors"],
       "policy":"Optional capabilities activate only when their adapter/dependency/credential is configured; unavailable integrations are never faked."
     }
+
+
+@router.post("/approvals/{id}/execute")
+async def execute_approved_external(id:str,_:str=Depends(auth)):
+    item=legacy.one("select * from approvals where id=?",(id,))
+    if not item: raise HTTPException(404,"Approval not found")
+    if item["status"]!="approved": raise HTTPException(409,"Approval must be approved before execution")
+    payload=j(item["payload"]); action=item["action"]
+    if action.startswith("connector."):
+        method=action.split(".",1)[1].upper()
+        target=str(payload.get("url",""))
+        headers=dict(payload.get("headers") or {})
+        async with legacy.httpx.AsyncClient(timeout=30) as client:
+            r=await client.request(method,target,headers=headers,json=payload.get("json"),params=payload.get("params"))
+            return {"ok":r.status_code<400,"status":r.status_code,"data":r.text[:20000]}
+    if action.startswith("gitlab."):
+        method=action.split(".",1)[1].upper()
+        url=str(payload.get("base_url","https://gitlab.com/api/v4")).rstrip("/") + str(payload.get("path",""))
+        token=os.getenv("GITLAB_TOKEN","")
+        if not token: raise HTTPException(503,"GITLAB_TOKEN is not configured")
+        headers={"PRIVATE-TOKEN":token,"Accept":"application/json"}
+        async with legacy.httpx.AsyncClient(timeout=30) as client:
+            r=await client.request(method,url,headers=headers,json=payload.get("json"))
+            return {"ok":r.status_code<400,"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
+    raise HTTPException(400,"This approval type is already executed by the decision endpoint or unsupported")
