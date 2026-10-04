@@ -52,7 +52,7 @@ Live runtime validation of external credentials, browser binaries, native OCR en
 ## Latest implementation pass
 
 The repository now includes:
-- 1,138 executable zero-cost local capabilities across 38 functional families (text, math, data, validation, conversion, media, automation, security and more).
+- 1,144 executable zero-cost local capabilities across 38 functional families (text, math, data, validation, conversion, media, automation, security and more).
 - A shared local tool registry and execution path, rather than dashboard-only placeholders.
 - A live workflow draft builder in the web dashboard.
 - Workflow validation against the actual enabled tool registry.
@@ -66,5 +66,5 @@ These are counted as implemented repository capabilities. Each catalog entry is 
 - Local browser fetch + HTML text extraction adapter: implemented and regression-tested.
 - Local OCR adapter: implemented with Tesseract/PyTesseract detection and explicit unavailable state.
 - Local media probe: implemented for MIME/file metadata, image dimensions and WAV audio metadata.
-- Latest GitHub Actions regression run: PASS.
+- Latest GitHub Actions regression run: previously failed on 3 regression-contract mismatches; fixes are being applied and must be re-verified.
 - Remaining capabilities that depend on an external runtime remain explicitly adapter-gated (full browser automation, production OCR engine, real media generation, authenticated third-party connectors, APK/desktop packaging in target environments).
