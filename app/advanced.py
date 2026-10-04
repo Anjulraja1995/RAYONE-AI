@@ -41,6 +41,11 @@ def auth(token=Depends(legacy.auth)):
 def j(x): return json.loads(x or "{}") if isinstance(x,str) else (x or {})
 def audit(action,target,detail): legacy.audit(action,target,detail)
 
+def permission_allows(subject, capability, scope="global"):
+    rows=legacy.rows("select effect,scope from permissions where subject=? and capability=?",(subject,capability))
+    if any(r["effect"]=="deny" and (r["scope"] in {"global",scope}) for r in rows): return False
+    return True
+
 def trace(state, request_id, payload=None):
     tid=str(uuid.uuid4())
     legacy.execute("insert into traces values(?,?,?,?,?,?)",(tid,request_id,state,"admin",legacy.dumps(payload or {}),legacy.now()))
@@ -1005,6 +1010,7 @@ def tools_catalog(_:str=Depends(auth)):
 async def tools_run(payload:dict,_:str=Depends(auth)):
     name=str(payload.get("name","")).strip()
     if not name: raise HTTPException(400,"tool name required")
+    if not permission_allows("admin","tool.execute",name): raise HTTPException(403,"Tool execution denied by permission policy")
     result=await legacy.execute_tool_internal(name,payload.get("args") or {})
     return {"ok":True,"tool":name,"result":result}
 
@@ -1025,7 +1031,7 @@ def validate_workflow(payload:dict,_:str=Depends(auth)):
         elif kind in {"memory","value","set","transform"}:
             pass
         else:
-            warnings.append(f"step {i}: unsupported/custom action '{kind}' will use value fallback")
+            errors.append(f"step {i}: unsupported action '{kind}'")
     return {"valid":not errors,"errors":errors,"warnings":warnings,"step_count":len(steps)}
 
 @router.get("/capabilities")
