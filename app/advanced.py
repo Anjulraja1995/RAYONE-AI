@@ -286,20 +286,52 @@ def update_schedule(id:str,x:ScheduleIn,_:str=Depends(auth)):
 def delete_schedule(id:str,_:str=Depends(auth)):
     legacy.execute("delete from schedules where id=?",(id,)); return {"ok":True}
 
+def _advance_schedule(s, finished_at=None):
+    now_ts=finished_at or legacy.now()
+    kind=s["kind"]
+    if kind=="once":
+        return None
+    if kind=="cron":
+        return _next_cron(s["expression"])
+    if kind=="interval":
+        try:
+            return now_ts + max(1.0,float(s["expression"]))
+        except Exception:
+            return now_ts + 3600.0
+    return now_ts + 3600.0
+
+async def _execute_schedule(s):
+    p=j(s["payload"])
+    action=s["action"]
+    if action=="chat":
+        return await assistant_run(AssistantIn(message=str(p.get("message","")),require_approval=False))
+    if action=="tool":
+        name=str(p.get("name","")).strip()
+        if not name: raise ValueError("scheduled tool requires payload.name")
+        return await legacy.execute_tool_internal(name,p.get("args") or {})
+    if action=="workflow":
+        wid=str(p.get("workflow_id","")).strip()
+        if not wid: raise ValueError("scheduled workflow requires payload.workflow_id")
+        return await legacy.run_workflow_internal(wid,p.get("input") or {})
+    raise ValueError("unsupported scheduled action: "+action)
+
 @router.post("/automation/run-due")
 async def run_due(_:str=Depends(auth)):
     due=legacy.rows("select * from schedules where enabled=1 and next_run<=? order by next_run",(legacy.now(),))
     results=[]
     for s in due:
-        p=j(s["payload"])
         try:
-            if s["action"]=="chat": result=await assistant_run(AssistantIn(message=str(p.get("message","")),require_approval=False))
-            else: result={"status":"unsupported_action","action":s["action"]}
+            result=await _execute_schedule(s)
             ok=True
-        except Exception as e: result={"error":str(e)}; ok=False
-        interval=float(s["expression"]) if s["kind"]=="interval" and str(s["expression"]).replace(".","",1).isdigit() else 3600
-        legacy.execute("update schedules set last_run=?,next_run=?,updated=? where id=?",(legacy.now(),legacy.now()+interval,legacy.now(),s["id"]))
-        results.append({"id":s["id"],"ok":ok,"result":result})
+        except Exception as e:
+            result={"error":str(e)}
+            ok=False
+        finished=legacy.now()
+        next_run=_advance_schedule(s,finished)
+        enabled=0 if s["kind"]=="once" else int(s["enabled"])
+        legacy.execute("update schedules set last_run=?,next_run=?,enabled=?,updated=? where id=?",(finished,next_run,enabled,finished,s["id"]))
+        audit("schedule.executed","schedule",{"id":s["id"],"ok":ok,"next_run":next_run})
+        results.append({"id":s["id"],"ok":ok,"result":result,"next_run":next_run,"enabled":bool(enabled)})
     return results
 
 @router.post("/files/upload")
@@ -378,13 +410,16 @@ async def scheduler_loop():
         try:
             due=legacy.rows("select * from schedules where enabled=1 and next_run<=? limit 20",(legacy.now(),))
             for s in due:
-                p=j(s["payload"])
-                if s["action"]=="chat" and p.get("message"):
-                    await assistant_run(AssistantIn(message=p["message"]))
-                interval=float(s["expression"]) if s["kind"]=="interval" and str(s["expression"]).replace(".","",1).isdigit() else 3600
-                legacy.execute("update schedules set last_run=?,next_run=?,updated=? where id=?",(legacy.now(),legacy.now()+interval,legacy.now(),s["id"]))
-        except Exception:
-            pass
+                try:
+                    await _execute_schedule(s)
+                except Exception as e:
+                    audit("schedule.error","schedule",{"id":s["id"],"error":str(e)})
+                finished=legacy.now()
+                next_run=_advance_schedule(s,finished)
+                enabled=0 if s["kind"]=="once" else int(s["enabled"])
+                legacy.execute("update schedules set last_run=?,next_run=?,enabled=?,updated=? where id=?",(finished,next_run,enabled,finished,s["id"]))
+        except Exception as e:
+            audit("scheduler.loop_error","scheduler",{"error":str(e)})
         await asyncio.sleep(15)
 
 
@@ -715,12 +750,8 @@ def add_one_time(x:ScheduleIn,_:str=Depends(auth)):
 async def run_schedule_now(id:str,_:str=Depends(auth)):
     s=legacy.one("select * from schedules where id=?",(id,))
     if not s: raise HTTPException(404,"Schedule not found")
-    p=j(s["payload"])
-    if s["action"]=="chat":
-        result=await assistant_run(AssistantIn(message=str(p.get("message",""))))
-    else:
-        result={"status":"unsupported_action","action":s["action"]}
-    audit("schedule.manual_run","schedule",{"id":id})
+    result=await _execute_schedule(s)
+    audit("schedule.manual_run","schedule",{"id":id,"kind":s["kind"]})
     return result
 
 async def _provider_failover(message,model_id=None):
