@@ -118,12 +118,19 @@ def _native_media(kind,prompt):
     if not _verified(result): raise RuntimeError("Native media verification failed")
     return result
 
-async def _chat(message,model_id=None,intent='chat'):
+async def _chat(message,model_id=None,intent='chat',conversation_id=None):
     legacy=_legacy()
     adv=_advanced()
     try:
         if adv and hasattr(adv,"_provider_failover"):
-            answer,provider,failures=await adv._provider_failover(message,model_id)
+            history=[]
+            if conversation_id:
+                try:
+                    rows=legacy.rows("select role,content from messages where conversation_id=? order by created desc limit 10",(conversation_id,))
+                    history=list(reversed(rows or []))
+                except Exception:
+                    history=[]
+            answer,provider,failures=await adv._provider_failover(message,model_id,history=history)
         else:
             answer,provider=await legacy.provider_chat(message,model_id)
             failures=0
@@ -336,10 +343,10 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             if not _verified(result): raise RuntimeError("Workspace search verification failed")
             out={"request_id":request_id,"state":"Complete","intent":intent,"result":result}
         elif intent=="chat":
-            result=await _chat(effective_message,model_id,intent)
+            result=await _chat(effective_message,model_id,intent,conversation_id=conversation_id)
             out={"request_id":request_id,"state":"Complete","intent":"chat","plan":plan,**result}
         else:
-            result=await _chat(message,model_id,intent)
+            result=await _chat(message,model_id,intent,conversation_id=conversation_id)
             out={"request_id":request_id,"state":"Complete","intent":intent,"plan":plan,**result}
         _trace(request_id,"Verifying",{"verified":True})
         _save(request_id,"Verifying",result=out)
