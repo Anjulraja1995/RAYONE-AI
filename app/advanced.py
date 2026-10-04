@@ -153,14 +153,15 @@ async def research(url_or_query):
             r=await c.get(url_or_query); return {"source":url_or_query,"status":r.status_code,"content":r.text[:20000]}
     return {"query":url_or_query,"status":"search_adapter_required","results":[]}
 
-def _conversation_turn(x, rid, answer="", provider=""):
+def _conversation_turn(x, rid, answer="", provider="", append_user=True):
     cid=x.conversation_id
     if cid and not legacy.one("select id from conversations where id=?",(cid,)): cid=None
     if not cid:
         cid=str(uuid.uuid4()); t=legacy.now()
         title=x.message.strip().replace("\n"," ")[:80] or "RAYONE Conversation"
         legacy.execute("insert into conversations values(?,?,?,?,?)",(cid,x.project_id,title,t,t))
-    legacy.execute("insert into messages values(?,?,?,?,?,?,?)",(str(uuid.uuid4()),cid,"user",x.message,"Understanding",None,legacy.now()))
+    if append_user:
+        legacy.execute("insert into messages values(?,?,?,?,?,?,?)",(str(uuid.uuid4()),cid,"user",x.message,"Understanding",None,legacy.now()))
     if answer:
         legacy.execute("insert into messages values(?,?,?,?,?,?,?)",(str(uuid.uuid4()),cid,"assistant",str(answer),"Complete",provider,legacy.now()))
     legacy.execute("update conversations set updated=? where id=?",(legacy.now(),cid))
@@ -207,14 +208,14 @@ async def assistant_run(x):
         result=await legacy.execute_tool_internal("core.calculator",{"expression":expr})
         trace("Verifying",rid,{"result":result})
         trace("Complete",rid)
-        _conversation_turn(x,rid,result,"local"); _auto_memory(x.message,str(result),cid)
+        _conversation_turn(x,rid,result,"local",False); _auto_memory(x.message,str(result),cid)
         return {"request_id":rid,"state":"Complete","intent":intent,"result":result,"conversation_id":cid}
     if intent=="research":
         trace("Researching",rid)
         result=await research(x.message.strip())
         trace("Verifying",rid,{"sources":1 if result.get("source") else 0})
         trace("Complete",rid)
-        _conversation_turn(x,rid,result.get("answer") if isinstance(result,dict) else str(result),"research"); _auto_memory(x.message,str(result),cid)
+        _conversation_turn(x,rid,result.get("answer") if isinstance(result,dict) else str(result),"research",False); _auto_memory(x.message,str(result),cid)
         return {"request_id":rid,"state":"Complete","intent":intent,"result":result,"conversation_id":cid}
     if intent=="media":
         trace("Executing",rid,{"media":True})
@@ -222,7 +223,7 @@ async def assistant_run(x):
         legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,"generic","queued",legacy.dumps(x.message),None,None,t,t))
         trace("Verifying",rid,{"media_job_id":mid})
         trace("Complete",rid)
-        msg="Media job queued; provider adapter can be attached without changing the core contract."; _conversation_turn(x,rid,msg,"media"); _auto_memory(x.message,msg,cid)
+        msg="Media job queued; provider adapter can be attached without changing the core contract."; _conversation_turn(x,rid,msg,"media",False); _auto_memory(x.message,msg,cid)
         return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"message":msg,"conversation_id":cid}
     trace("Executing",rid)
     answer,provider=await legacy.provider_chat(x.message,x.model_id)
@@ -234,7 +235,7 @@ async def assistant_run(x):
     trace("Verifying",rid,{"provider":provider})
     trace("Complete",rid)
     metric("assistant.completed")
-    _conversation_turn(x,rid,answer,provider); _auto_memory(x.message,answer,cid)
+    _conversation_turn(x,rid,answer,provider,False); _auto_memory(x.message,answer,cid)
     return {"request_id":rid,"state":"Complete","intent":intent,"provider":provider,"answer":answer,"conversation_id":cid}
 
 @router.post("/assistant/chat")
