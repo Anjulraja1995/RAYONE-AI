@@ -1233,7 +1233,8 @@ def _value(a):
         if k in a: return a[k]
     return ""
 
-def execute_local(family, op, a):    if family=="documents":
+def execute_local(family, op, a):
+    if family=="documents":
         if op=="metadata":
             name=str(a.get("name",a.get("value","")))
             return {"name":name,"extension":Path(name).suffix.lower(),"stem":Path(name).stem,"mime":a.get("mime","application/octet-stream")}
