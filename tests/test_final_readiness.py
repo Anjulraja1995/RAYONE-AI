@@ -34,7 +34,7 @@ def test_execution_idempotency_and_auth_boundary():
     p={"name":"local.math.sum","args":{"values":[10,5]},"request_id":"final-readiness-idempotent"}
     a=client.post("/api/v2/tools/run",headers=h,json=p); b=client.post("/api/v2/tools/run",headers=h,json=p)
     assert a.status_code==200 and b.status_code==200 and b.json()["result"]==15
-    assert client.get("/api/v2/summary").status_code==401
+    assert client.get("/api/summary").status_code==401
     assert client.get("/api/v2/production/status").status_code==401
 def test_native_creative_artifacts():
     h=login()
