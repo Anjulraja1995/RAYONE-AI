@@ -95,9 +95,23 @@ def test_password_hash_roundtrip():
 def test_local_tool_pack():
     t=token(); hh=h(t)
     r=client.get('/api/v2/tools/catalog',headers=hh)
-    assert r.status_code==200 and r.json()['count'] >= 50
+    assert r.status_code==200 and r.json()['count'] >= 1100
+    assert r.json()['count'] == 1138
     r=client.post('/api/v2/tools/run',headers={**hh,'Content-Type':'application/json'},json={'name':'local.text.slug','args':{'text':'Hello RAYONE World'}})
     assert r.status_code==200 and r.json()['result']=='hello-rayone-world'
+
+def test_expanded_local_capabilities():
+    t=token(); hh=h(t)
+    for name,args in [
+        ('local.finance.discount',{'value':100,'rate':10}),
+        ('local.geometry.circle_area',{'value':2}),
+        ('local.colors.hex_to_rgb',{'value':'#ff0000'}),
+        ('local.conversion.celsius_fahrenheit',{'value':0}),
+        ('local.security.safe_filename',{'value':'hello world?.txt'}),
+    ]:
+        r=client.post('/api/v2/tools/run',headers={**hh,'Content-Type':'application/json'},json={'name':name,'args':args})
+        assert r.status_code==200
+
 
 def test_workflow_validation():
     t=token(); hh=h(t)
