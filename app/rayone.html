@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RAYONE AI</title>
+<style>
+:root{--bg:#05090d;--panel:#0b1218;--panel2:#101b23;--line:#20323d;--text:#eef7f5;--muted:#8fa4ad;--a:#83e6b1;--b:#76cfff}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 50% -20%,#183542 0,#05090d 46%);color:var(--text);font:15px system-ui,-apple-system,Segoe UI,sans-serif;min-height:100vh}button,input{font:inherit}
+.top{height:68px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 22px;gap:12px;background:#071017dd;backdrop-filter:blur(14px);position:sticky;top:0;z-index:5}.brand{font-weight:900;letter-spacing:3px;font-size:22px}.badge{border:1px solid #315362;color:var(--a);padding:6px 10px;border-radius:999px;font-size:11px;letter-spacing:.8px}.grow{flex:1}.btn{border:1px solid #2e4b58;background:#101f28;color:var(--text);border-radius:11px;padding:10px 14px;cursor:pointer}.btn:hover{border-color:#547484;background:#152934}.primary{background:#dff7ea;color:#071016;border-color:transparent;font-weight:800}
+.wrap{width:min(1120px,calc(100% - 28px));margin:0 auto;padding:34px 0 70px}.hero{text-align:center;padding:34px 10px 22px}.orb{width:76px;height:76px;border-radius:50%;margin:0 auto 18px;background:radial-gradient(circle at 35% 30%,#d9fff0,#69dca5 32%,#174d40 67%,#081313);box-shadow:0 0 55px #4ee0aa33,0 0 120px #4bbde022}.hero h1{font-size:42px;margin:0 0 9px;letter-spacing:2px}.hero p{margin:0;color:var(--muted)}
+.chat{background:linear-gradient(145deg,#0c161d,#081016);border:1px solid var(--line);border-radius:22px;min-height:520px;display:flex;flex-direction:column;overflow:hidden;box-shadow:0 24px 70px #0008}.messages{flex:1;overflow:auto;padding:24px}.empty{text-align:center;color:var(--muted);padding:80px 20px}.msg{max-width:82%;padding:13px 16px;border:1px solid #203640;border-radius:16px;margin:10px 0;white-space:pre-wrap;line-height:1.5}.user{margin-left:auto;background:#123529;border-color:#245944}.ray{background:#0e1c24}.meta{font-size:11px;color:var(--muted);margin-top:7px}.composer{border-top:1px solid var(--line);padding:14px;display:flex;gap:9px;background:#081118}.composer input{flex:1;min-width:0;background:#0b171e;border:1px solid #29424e;color:var(--text);padding:14px;border-radius:13px;outline:none}.composer input:focus{border-color:#4b7180}.quick{display:flex;gap:8px;flex-wrap:wrap;margin:14px 0}.quick button{font-size:12px;padding:8px 11px}.status{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-top:14px}.stat{background:#0b151c;border:1px solid var(--line);border-radius:13px;padding:12px}.stat b{display:block;font-size:18px}.stat span{font-size:11px;color:var(--muted)}.footer{text-align:center;color:#607680;font-size:11px;margin-top:20px}
+@media(max-width:650px){.top{padding:0 12px}.top .hide{display:none}.hero h1{font-size:31px}.wrap{width:min(100% - 18px,1120px);padding-top:18px}.chat{min-height:calc(100vh - 250px);border-radius:17px}.messages{padding:15px}.msg{max-width:92%}.status{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<header class="top"><div class="brand">RAYONE</div><span class="badge">AI CORE</span><span class="badge hide" id="state">READY</span><span class="grow"></span><button class="btn hide" id="control">Command Center</button><button class="btn" id="logout">Logout</button></header>
+<div class="wrap">
+<section class="hero"><div class="orb"></div><h1>RAYONE AI</h1><p>Your universal AI assistant — ask, create, research, calculate and execute.</p></section>
+<section class="chat">
+<div id="messages" class="messages"><div class="empty" id="empty">Ask RAYONE anything.<br>Try <b>Hello RAYONE</b>, a calculation, a planning request, or a task.</div></div>
+<div class="quick">
+<button class="btn" data-q="Hello RAYONE">Hello</button>
+<button class="btn" data-q="Calculate 125 * 48">Calculate</button>
+<button class="btn" data-q="Create a plan for my project">Plan</button>
+<button class="btn" data-q="Search my knowledge for important information">Knowledge</button>
+</div>
+<div class="composer"><button class="btn" id="mic" title="Voice input">Mic</button><input id="input" autocomplete="off" placeholder="Message RAYONE…"><button class="btn primary" id="send">Send</button></div>
+</section>
+<div class="status" id="status"><div class="stat"><b>—</b><span>Capabilities</span></div><div class="stat"><b>—</b><span>Native Engines</span></div><div class="stat"><b>—</b><span>Memory</span></div><div class="stat"><b>—</b><span>Core</span></div></div>
+<div class="footer">RAYONE → Understanding → Planning → Execution → Verification → Result</div>
+</div>
+<script>
+(function(){
+"use strict";
+let token=localStorage.getItem("rayone_token")||"";
+const $=id=>document.getElementById(id);
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]||c));}
+async function api(url,opt={}){opt.headers=Object.assign({},opt.headers||{},token?{"Authorization":"Bearer "+token}:{});let r=await fetch(url,opt);if(r.status===401){localStorage.removeItem("rayone_token");location.reload();throw Error("Session expired");}if(!r.ok)throw Error(await r.text());return r.json();}
+function add(text,who,meta){$("empty")?.remove();let d=document.createElement("div");d.className="msg "+(who==="user"?"user":"ray");d.innerHTML=esc(text)+(meta?'<div class="meta">'+esc(meta)+'</div>':"");$("messages").appendChild(d);$("messages").scrollTop=$("messages").scrollHeight;}
+async function send(){let el=$("input"),v=el.value.trim();if(!v)return;add(v,"user");el.value="";$("state").textContent="THINKING";try{let x=await api("/api/v2/assistant/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v})});let answer=x.answer||x.message||(typeof x.result==="string"?x.result:JSON.stringify(x.result||x,null,2));add(answer,"ray",(x.intent||"chat")+" · "+(x.provider||"local core")+" · "+(x.state||"Complete"));$("state").textContent="READY";}catch(e){add("I couldn't complete that request: "+e.message,"ray","error");$("state").textContent="ERROR";}}
+$("send").onclick=send;$("input").onkeydown=e=>{if(e.key==="Enter")send()};document.querySelectorAll("[data-q]").forEach(b=>b.onclick=()=>{$("input").value=b.dataset.q;send()});
+$("logout").onclick=()=>{localStorage.removeItem("rayone_token");location.reload()};
+$("control").onclick=()=>location.href="/control";
+$("mic").onclick=()=>{let R=window.SpeechRecognition||window.webkitSpeechRecognition;if(!R){add("Voice input is not available in this browser. You can still use text.","ray","voice");return}let r=new R();r.lang="en-IN";r.interimResults=false;r.onresult=e=>{$("input").value=e.results[0][0].transcript;send()};r.start();};
+async function boot(){try{let h=await api("/api/v2/status"),n=await api("/api/v2/native/status"),c=await api("/api/v2/tools/catalog");let engines=Object.values(n.engines||{}).filter(Boolean).length;$("status").innerHTML='<div class="stat"><b>'+esc(c.count||0)+'</b><span>Executable capabilities</span></div><div class="stat"><b>'+engines+'</b><span>Native engines</span></div><div class="stat"><b>'+esc((h.counts||{}).memories||0)+'</b><span>Stored memories</span></div><div class="stat"><b>ONLINE</b><span>RAYONE core</span></div>';}catch(e){$("status").innerHTML='<div class="stat"><b>LOCAL</b><span>Core</span></div>'}}
+boot();
+})();
+</script>
+</body>
+</html>
