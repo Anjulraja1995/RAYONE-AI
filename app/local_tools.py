@@ -595,9 +595,9 @@ FAMILIES = {
         "greater_equal",
         "less_equal",
         "between",
-        "all_True",
-        "any_True",
-        "none_True",
+        "all_true",
+        "any_true",
+        "none_true",
         "majority",
         "if_then",
         "coalesce",
@@ -1233,6 +1233,45 @@ def execute_local(family, op, a):
     v=_value(a); text=str(v if not isinstance(v,(list,dict)) else a.get("text",v))
     items=a.get("items",a.get("values",[]))
     if not isinstance(items,list): items=[items]
+    # Family-specific guards run before shared operation names so list/url/json/html
+    # operations cannot collide with text primitives.
+    if family=="list":
+        if op=="reverse": return list(reversed(items))
+        if op=="sort": return sorted(items,key=lambda x:str(x))
+        if op=="count": return len(items)
+        if op=="contains": return a.get("value") in items
+        if op=="unique": return list(dict.fromkeys(items))
+    if family=="sets":
+        x=set(a.get("left",items)); y=set(a.get("right",[]))
+        if op=="union": return sorted(x|y,key=str)
+        if op=="intersection": return sorted(x&y,key=str)
+        if op=="difference": return sorted(x-y,key=str)
+        if op=="symmetric_difference": return sorted(x^y,key=str)
+        if op=="subset": return x<=y
+        if op=="superset": return x>=y
+        if op=="disjoint": return x.isdisjoint(y)
+        if op=="size": return len(x)
+    if family=="json":
+        if op=="parse": return json.loads(str(a.get("value","{}")))
+        if op=="stringify": return json.dumps(a.get("value",{}),ensure_ascii=False,separators=(",",":"))
+        if op=="pretty": return json.dumps(a.get("value",{}),ensure_ascii=False,indent=2)
+        if op=="keys": return list((a.get("value") or {}).keys())
+        if op=="values": return list((a.get("value") or {}).values())
+        if op=="get": return (a.get("value") or {}).get(a.get("key"))
+        if op=="has_key": return a.get("key") in (a.get("value") or {})
+    if family=="url" and op=="parse":
+        u=urllib.parse.urlparse(text); return {"scheme":u.scheme,"host":u.hostname,"port":u.port,"path":u.path,"query":u.query,"fragment":u.fragment}
+    if family=="html":
+        if op=="escape": return html.escape(text)
+        if op=="unescape": return html.unescape(text)
+        if op in ("strip_tags","text_content","to_plaintext"): return re.sub(r"<[^>]+>","",text)
+    if family=="colors":
+        if op=="hex_to_rgb":
+            h=text.strip().lstrip("#"); h=h if len(h)==6 else "".join(ch*2 for ch in h); return [int(h[i:i+2],16) for i in (0,2,4)]
+        if op=="rgb_to_hex":
+            rgb=a.get("rgb",a.get("value",items)); return "#"+ "".join(f"{int(float(x)):02x}" for x in rgb[:3])
+        if op=="grayscale":
+            rgb=a.get("rgb",a.get("value",items)); g=round(.299*float(rgb[0])+.587*float(rgb[1])+.114*float(rgb[2])); return [g,g,g]
     # Text/string primitives
     if op=="lower": return text.lower()
     if op in ("upper","uppercase"): return text.upper()
