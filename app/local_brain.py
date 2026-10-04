@@ -135,15 +135,15 @@ def infer_local_tool(message: str):
         (r"\b(?:is prime|prime number)\b", "local.math.is_prime", "number"),
         (r"\b(?:factorial)\b", "local.math.factorial", "number"),
         (r"\b(?:square root|sqrt)\b", "local.math.sqrt", "number"),
-        (r"\b(?:celsius|centigrade)\\b.*\\b(?:fahrenheit|f)\b", "local.conversion.celsius_fahrenheit", "number"),
-        (r"\b(?:fahrenheit|f)\\b.*\\b(?:celsius|centigrade|c)\b", "local.conversion.fahrenheit_celsius", "number"),
-        (r"\b(?:kg|kilogram|kilograms)\\b.*\\b(?:lb|pound|pounds)\b", "local.conversion.kg_lb", "number"),
-        (r"\b(?:lb|pound|pounds)\\b.*\\b(?:kg|kilogram|kilograms)\b", "local.conversion.lb_kg", "number"),
+        (r"\b(?:celsius|centigrade)\b.*\b(?:fahrenheit|f)\b", "local.conversion.celsius_fahrenheit", "number"),
+        (r"\b(?:fahrenheit|f)\b.*\b(?:celsius|centigrade|c)\b", "local.conversion.fahrenheit_celsius", "number"),
+        (r"\b(?:kg|kilogram|kilograms)\b.*\b(?:lb|pound|pounds)\b", "local.conversion.kg_lb", "number"),
+        (r"\b(?:lb|pound|pounds)\b.*\b(?:kg|kilogram|kilograms)\b", "local.conversion.lb_kg", "number"),
         (r"\b(?:today|current date|date today|आज की तारीख)\b", "core.datetime", "none"),
     ]
     for pattern,target,kind in patterns:
         if re.search(pattern,low,re.I):
-            nums=re.findall(r"-?\d+(?:\\.\\d+)?",low)
+            nums=re.findall(r"-?\d+(?:\.\\d+)?",low)
             if kind=="text":
                 body=re.sub(pattern,"",m,flags=re.I).strip(" :,-")
                 return target,{"text":body}
