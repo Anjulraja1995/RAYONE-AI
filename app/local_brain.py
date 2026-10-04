@@ -15,8 +15,8 @@ def _has(text, *terms):
 def language(text):
     return "hi" if re.search(r"[\u0900-\u097F]", str(text or "")) else "en"
 
-def classify(message: str) -> str:
-    m=str(message or "").strip().lower()
+def classify(message: str, conversation_context: str = "") -> str:
+    m=(str(message or "")+" "+str(conversation_context or "")).strip().lower()
     if not m: return "chat"
     if _has(m,"image","photo","picture","poster","thumbnail","design","graphic","इमेज","फोटो","पोस्टर","डिजाइन"):
         return "media"
@@ -40,6 +40,20 @@ def classify(message: str) -> str:
     if _has(m,"plan","planning","roadmap","steps","checklist","योजना","प्लान","रोडमैप","स्टेप्स"):
         return "planning"
     return "chat"
+
+def resolve_followup(message: str, context: list[dict] | None = None) -> dict[str, str]:
+    msg=str(message or "").strip()
+    recent=" ".join(str(x.get("content","")) for x in (context or [])[-6:])
+    low=msg.lower()
+    if recent and re.match(r"^(banao|banाओ|create it|make it|do it|go ahead|ok|okay|complete|complete it|yes|haan|ha|करो|बनाओ|बना दो|ठीक है|कम्प्लीट करो|कर दो)\b",low):
+        prior=recent
+        if _has(prior,"image","photo","nature","इमेज","फोटो","चित्र"):
+            return {"intent":"media","kind":"image","message":"Create the requested image described in the previous conversation: "+prior[-2500:]}
+        if _has(prior,"video","reel","वीडियो","रील"):
+            return {"intent":"media","kind":"video","message":"Create the requested video described in the previous conversation: "+prior[-2500:]}
+        if _has(prior,"music","song","गाना","म्यूजिक"):
+            return {"intent":"media","kind":"music","message":"Create the requested music described in the previous conversation: "+prior[-2500:]}
+    return {"intent":classify(msg),"kind":classify(msg),"message":msg}
 
 def calculator_expression(message: str) -> str:
     m=str(message or "").strip()
