@@ -103,3 +103,9 @@ def test_workflow_validation():
     t=token(); hh=h(t)
     r=client.post('/api/v2/workflows/validate',headers={**hh,'Content-Type':'application/json'},json={'steps':[{'type':'tool','name':'local.text.upper','args':{'text':'hello'}}]})
     assert r.status_code==200 and r.json()['valid'] is True
+
+
+def test_vorqyon_execute_and_verify():
+    t=token(); hh=h(t)
+    r=client.post('/api/v2/vorqyon/execute',headers={**hh,'Content-Type':'application/json'},json={'mode':'tool','target':'local.math.sum','args':{'values':[1,2,3]},'expected':6})
+    assert r.status_code==200 and r.json()['verification']['ok'] is True
