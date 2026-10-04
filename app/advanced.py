@@ -207,7 +207,7 @@ def delete_conversation(id:str,_:str=Depends(auth)):
 def _auto_memory(message, answer, conversation_id):
     if not answer or len(str(answer)) < 8: return
     content=f"User: {message}\nAssistant: {str(answer)[:4000]}"
-    low=x.message.lower(); kind="video" if "video" in low else ("music" if "music" in low else ("audio" if "audio" in low else ("voice" if ("voice" in low or "tts" in low or "speech" in low) else "image"))); result=legacy.BUILTIN_PACK[kind]["generate"]({"prompt":x.message}); mid=str(uuid.uuid4()); t=legacy.now()
+    mid=str(uuid.uuid4()); t=legacy.now()
     legacy.execute("insert into memories values(?,?,?,?,?)",(mid,"conversation",content,legacy.dumps({"conversation_id":conversation_id,"auto":True}),t))
     legacy.execute("insert into memory_index values(?,?,?,?,?)",(str(uuid.uuid4()),mid,legacy.dumps(sorted(_tokens(content))),hashlib.sha256(content.encode()).hexdigest(),t))
 
