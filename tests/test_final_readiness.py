@@ -41,3 +41,30 @@ def test_native_creative_artifacts():
     for name in ["local.image.generate","local.design.generate","local.audio.generate","local.music.generate","local.voice.generate","local.video.generate"]:
         r=client.post("/api/v2/tools/run",headers=h,json={"name":name,"args":{"prompt":"final readiness"}})
         assert r.status_code==200 and r.json()["result"]["size"]>0
+
+
+def test_conversational_pending_followup_and_status():
+    h=login()
+    cid="final-conversation-followup"
+    q=client.post("/api/v2/assistant/chat",headers=h,json={
+        "message":"Can you make a nature image?","conversation_id":cid,
+        "request_id":"capability-question"
+    })
+    assert q.status_code==200 and q.json().get("pending") is True
+    run=client.post("/api/v2/assistant/chat",headers=h,json={
+        "message":"Banao","conversation_id":cid,"request_id":"pending-execution"
+    })
+    assert run.status_code==200 and run.json().get("intent")=="media"
+    assert run.json().get("result",{}).get("size",0)>0
+    status=client.post("/api/v2/assistant/chat",headers=h,json={
+        "message":"Ky hua","conversation_id":cid,"request_id":"status-followup"
+    })
+    assert status.status_code==200 and "previous" in status.json().get("answer","").lower()
+
+def test_planning_is_executed_not_chat_fallback():
+    h=login()
+    r=client.post("/api/v2/assistant/chat",headers=h,json={
+        "message":"Make a plan for launching RAYONE","request_id":"planning-execution"
+    })
+    assert r.status_code==200 and r.json().get("intent")=="planning"
+    assert r.json().get("result",{}).get("steps")
