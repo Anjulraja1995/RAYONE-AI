@@ -490,25 +490,51 @@ async def run_agent(id:str,payload:dict,_:str=Depends(auth)):
     if not agent: raise HTTPException(404,"Agent not found or disabled")
     message=str(payload.get("message","")).strip()
     if not message: raise HTTPException(400,"message required")
-    max_steps=min(int(payload.get("max_steps",5)),10)
+    max_steps=max(1,min(int(payload.get("max_steps",5)),10))
+    plan=payload.get("steps")
+    if plan is None:
+        plan=[{"type":"chat","message":message}]
+    if not isinstance(plan,list) or not plan:
+        raise HTTPException(400,"steps must be a non-empty list")
+    if len(plan)>max_steps:
+        plan=plan[:max_steps]
     rid=str(uuid.uuid4()); trace("Understanding",rid,{"agent_id":id})
-    history=[]; current=message
-    for step in range(max_steps):
-        intent=classify(current); trace("Planning",rid,{"step":step+1,"intent":intent})
-        if intent=="tool":
-            expr=re.sub(r"^(please\s+)?(calculate|compute)\s+","",current,flags=re.I)
-            result=await legacy.execute_tool_internal("core.calculator",{"expression":expr})
-            history.append({"step":step+1,"action":"calculator","result":result})
-            trace("Verifying",rid,{"step":step+1})
-            break
-        answer,provider=await legacy.provider_chat(current,agent["model_id"])
-        if answer is None:
-            answer="Local agent result: "+current
-            provider="local"
-        history.append({"step":step+1,"action":"model","provider":provider,"answer":answer})
-        break
+    history=[]
+    for step_no,step in enumerate(plan,1):
+        if not isinstance(step,dict):
+            raise HTTPException(400,f"step {step_no}: expected object")
+        kind=step.get("type",step.get("action",""))
+        trace("Planning",rid,{"step":step_no,"intent":kind})
+        try:
+            if kind=="tool":
+                name=str(step.get("name","")).strip()
+                if not name: raise HTTPException(400,f"step {step_no}: tool name required")
+                if not permission_allows("admin","tool.execute",name):
+                    raise HTTPException(403,"Tool execution denied by permission policy")
+                result=await legacy.execute_tool_internal(name,step.get("args") or {})
+                item={"step":step_no,"action":"tool","tool":name,"result":result}
+            elif kind=="chat":
+                prompt=str(step.get("message",message))
+                answer,provider=await legacy.provider_chat(prompt,agent["model_id"])
+                item={"step":step_no,"action":"chat","provider":provider or "local","answer":answer or "RAYONE local core received: "+prompt}
+            elif kind=="memory":
+                content=str(step.get("content",message))
+                mid=str(uuid.uuid4()); t=legacy.now()
+                legacy.execute("insert into memories values(?,?,?,?,?)",(mid,step.get("scope","agent"),content,legacy.dumps(step.get("metadata",{})),t))
+                item={"step":step_no,"action":"memory","memory_id":mid,"content":content}
+            else:
+                raise HTTPException(400,f"step {step_no}: unsupported action '{kind}'")
+            history.append(item)
+            trace("Verifying",rid,{"step":step_no,"ok":True})
+        except HTTPException:
+            trace("Verifying",rid,{"step":step_no,"ok":False})
+            raise
+        except Exception as e:
+            trace("Verifying",rid,{"step":step_no,"ok":False,"error":str(e)})
+            raise HTTPException(500,f"agent step {step_no} failed")
     trace("Complete",rid,{"steps":len(history)})
-    return {"request_id":rid,"agent_id":id,"state":"Complete","steps":history}
+    return {"request_id":rid,"agent_id":id,"state":"Complete","steps":history,"step_count":len(history)}
+
 
 async def _extract_bytes(name,data,mime):
     ext=Path(name).suffix.lower()
@@ -1019,20 +1045,22 @@ def validate_workflow(payload:dict,_:str=Depends(auth)):
     steps=payload.get("steps")
     if not isinstance(steps,list) or not steps: raise HTTPException(400,"steps must be a non-empty list")
     errors=[]; warnings=[]
-    for i,s in enumerate(steps):
-        if not isinstance(s,dict): errors.append(f"step {i}: expected object"); continue
-        kind=s.get("type",s.get("action",""))
+    allowed={"tool","chat","memory","value","set","transform"}
+    for i,step in enumerate(steps):
+        if not isinstance(step,dict): errors.append(f"step {i}: expected object"); continue
+        kind=step.get("type",step.get("action",""))
+        if kind not in allowed:
+            errors.append(f"step {i}: unsupported action '{kind}'"); continue
         if kind=="tool":
-            name=str(s.get("name",""))
+            name=str(step.get("name",""))
             if not name: errors.append(f"step {i}: tool name required")
             elif not legacy.one("select id from tools where id=? and enabled=1",(name,)): errors.append(f"step {i}: tool not registered/enabled: {name}")
-        elif kind=="chat":
-            if not s.get("message"): warnings.append(f"step {i}: chat message is empty")
-        elif kind in {"memory","value","set","transform"}:
-            pass
-        else:
-            errors.append(f"step {i}: unsupported action '{kind}'")
+        elif kind=="chat" and not step.get("message"):
+            warnings.append(f"step {i}: chat message is empty")
+        elif kind in {"set","transform"} and not step.get("key"):
+            errors.append(f"step {i}: {kind} key required")
     return {"valid":not errors,"errors":errors,"warnings":warnings,"step_count":len(steps)}
+
 
 @router.get("/capabilities")
 def capabilities(_:str=Depends(auth)):
