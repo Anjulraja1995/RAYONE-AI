@@ -1,9 +1,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
-import asyncio, base64, hashlib, json, mimetypes, os, re, time, uuid
+import asyncio, base64, hashlib, json, mimetypes, os, re, time, uuid, datetime, zipfile
 from . import main as legacy
 
 router = APIRouter(prefix="/api/v2", tags=["RAYONE v2 control plane"])
@@ -838,6 +838,42 @@ def backup_delete(name:str,_:str=Depends(auth)):
 def workspace_stats(_:str=Depends(auth)):
     fs=legacy.rows("select count(*) n,coalesce(sum(size),0) bytes from workspace_files")[0]
     return {"files":fs["n"],"bytes":fs["bytes"],"media_jobs":legacy.rows("select count(*) n from media_jobs")[0]["n"]}
+
+@router.get("/tools/catalog")
+def tools_catalog(_:str=Depends(auth)):
+    items=[]
+    for family,ops in legacy.BUILTIN_PACK.items():
+        for op in ops:
+            tid=f"local.{family}.{op}"
+            items.append({"id":tid,"family":family,"operation":op,"kind":"builtin","enabled":bool(legacy.one("select id from tools where id=? and enabled=1",(tid,)))})
+    return {"count":len(items),"families":sorted(legacy.BUILTIN_PACK),"tools":items}
+
+@router.post("/tools/run")
+async def tools_run(payload:dict,_:str=Depends(auth)):
+    name=str(payload.get("name","")).strip()
+    if not name: raise HTTPException(400,"tool name required")
+    result=await legacy.execute_tool_internal(name,payload.get("args") or {})
+    return {"ok":True,"tool":name,"result":result}
+
+@router.post("/workflows/validate")
+def validate_workflow(payload:dict,_:str=Depends(auth)):
+    steps=payload.get("steps")
+    if not isinstance(steps,list) or not steps: raise HTTPException(400,"steps must be a non-empty list")
+    errors=[]; warnings=[]
+    for i,s in enumerate(steps):
+        if not isinstance(s,dict): errors.append(f"step {i}: expected object"); continue
+        kind=s.get("type",s.get("action",""))
+        if kind=="tool":
+            name=str(s.get("name",""))
+            if not name: errors.append(f"step {i}: tool name required")
+            elif not legacy.one("select id from tools where id=? and enabled=1",(name,)): errors.append(f"step {i}: tool not registered/enabled: {name}")
+        elif kind=="chat":
+            if not s.get("message"): warnings.append(f"step {i}: chat message is empty")
+        elif kind in {"memory","value","set","transform"}:
+            pass
+        else:
+            warnings.append(f"step {i}: unsupported/custom action '{kind}' will use value fallback")
+    return {"valid":not errors,"errors":errors,"warnings":warnings,"step_count":len(steps)}
 
 @router.get("/capabilities")
 def capabilities(_:str=Depends(auth)):
