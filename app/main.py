@@ -347,6 +347,12 @@ async def execute_tool_internal(name,args):
     elif name=="core.datetime":result=time.strftime("%Y-%m-%d %H:%M:%S %Z",time.localtime())
     elif name=="core.memory_search":result=rows("select * from memories where content like ? order by created desc limit 20",(f"%{args.get('query','')}%",))
     elif name=="core.json":result=json.loads(args.get("value","{}"))
+    elif name.startswith("local."):
+        parts=name.split(".",2)
+        family,op=parts[1],parts[2]
+        fn=BUILTIN_PACK.get(family,{}).get(op)
+        if not fn: raise HTTPException(404,"Local tool operation not found")
+        result=fn(args)
     elif tool["kind"]=="http":
         cfg=json.loads(tool["config"] or "{}");url=cfg.get("url","")
         if not re.match(r"^https?://",url):raise ValueError("Tool URL must be http(s)")
