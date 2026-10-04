@@ -197,6 +197,33 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
         _trace(request_id,"Complete",{"status_for":rid})
         return out
     effective_message=resolved.get("message") or message
+
+    # Explicitly sequenced requests are executed step-by-step through the same
+    # pipeline, preserving permissions, tracing, verification and persistence.
+    from .local_brain import split_compound_tasks
+    compound=split_compound_tasks(effective_message)
+    if len(compound)>1 and not target and not args and intent not in {"status","planning","automation","workflow"}:
+        children=[]
+        for index,subtask in enumerate(compound,1):
+            child_id=str(uuid.uuid4())
+            child=await run_pipeline(message=subtask,model_id=model_id,conversation_id=conversation_id,
+                                     require_approval=require_approval,request_id=child_id,subject=subject)
+            if child.get("state")!="Complete":
+                raise RuntimeError("Step %d failed: %s"%(index,child.get("state","unknown")))
+            children.append({"step":index,"request":subtask,"intent":child.get("intent"),
+                             "answer":child.get("answer"),"result":child.get("result"),"request_id":child_id})
+        out={"request_id":request_id,"state":"Complete","intent":"workflow",
+             "plan":{"intent":"workflow","steps":[{"step":i+1,"action":x["request"]} for i,x in enumerate(children)],
+                     "execution_policy":"sequential native-first","verified":True},
+             "answer":"Completed %d requested steps successfully."%len(children),
+             "result":{"steps":children,"verified":True}}
+        _save(request_id,"Verifying",result=out)
+        _save(request_id,"Complete",intent="workflow",result=out)
+        _save_conversation_state(conversation_id,pending_intent=None,pending_kind=None,pending_message=None,
+                                 last_request_id=request_id,last_state="Complete",last_result=out)
+        _trace(request_id,"Complete",{"compound_steps":len(children),"verified":True})
+        return out
+
     inferred=infer_local_tool(effective_message) if intent=="chat" else None
     if inferred:
         target,args=inferred
