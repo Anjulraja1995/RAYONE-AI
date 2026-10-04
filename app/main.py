@@ -424,7 +424,23 @@ async def run_workflow_internal(wid, input_data):
         if kind=="tool":out=await execute_tool_internal(step["name"],step.get("args",data))
         elif kind=="chat":out=(await provider_chat(str(step.get("message",data.get("message",data)))))[0] or f"RAYONE local core received: {data}"
         elif kind=="memory":out=execute("insert into memories values(?,?,?,?,?)",(str(uuid.uuid4()),step.get("scope","workflow"),str(step.get("content",data)),dumps(step.get("metadata",{})),now()))
-        else:out=step.get("value",data)
+        elif kind=="value":out=step.get("value",data)
+        elif kind=="set":
+            key=str(step.get("key","")).strip()
+            if not key: raise ValueError("Workflow set step requires key")
+            data[key]=step.get("value",data.get(key)); out=data[key]
+        elif kind=="transform":
+            key=str(step.get("key","")).strip()
+            if not key: raise ValueError("Workflow transform step requires key")
+            value=data.get(key,data.get("previous",data))
+            operation=str(step.get("operation","string")).lower()
+            if operation=="lower": out=str(value).lower()
+            elif operation=="upper": out=str(value).upper()
+            elif operation=="strip": out=str(value).strip()
+            elif operation=="length": out=len(value)
+            else: raise ValueError("Unsupported transform operation")
+            data[key]=out
+        else: raise ValueError("Unsupported workflow action: "+kind)
         outputs.append(out);data={"previous":out,"outputs":outputs}
     emit("workflow.completed",{"id":wid});return {"workflow_id":wid,"outputs":outputs,"result":data}
 
