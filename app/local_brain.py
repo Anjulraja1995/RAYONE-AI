@@ -84,77 +84,134 @@ def resolve_followup(message: str, context: list[dict] | None = None, pending: d
 
 
 def infer_local_tool(message: str):
-    """Map common natural requests to a real registered local capability."""
+    """Resolve natural language to a concrete registered executable capability.
+
+    Native routing is deterministic and parameter-aware.  It deliberately
+    returns None when the request cannot be mapped safely instead of pretending
+    that a generic placeholder executed the task.
+    """
     m=str(message or "").strip()
     low=m.lower()
-    if re.search(r"\b\d+(?:\.\d+)?\s*(km|kilometers?)\b.*\b(miles?)\b",low):
-        n=float(re.search(r"\b(\d+(?:\.\d+)?)\s*(?:km|kilometers?)\b",low).group(1))
-        return "local.conversion.km_miles",{"value":n}
-    if re.search(r"\b\d+(?:\.\d+)?\s*(miles?)\b.*\b(km|kilometers?)\b",low):
-        n=float(re.search(r"\b(\d+(?:\.\d+)?)\s*(?:miles?)\b",low).group(1))
-        return "local.conversion.miles_km",{"value":n}
-    m_pct=re.search(r"\b(\d+(?:\.\d+)?)\s*%\s*(?:of|का|की|के)\s*(\d+(?:\.\d+)?)",low)
-    if m_pct:
-        return "local.math.percent",{"value":float(m_pct.group(2)),"rate":float(m_pct.group(1))}
-    m_disc=re.search(r"(?:discount|छूट)\D*(\d+(?:\.\d+)?)\D*(?:%|percent)",low)
-    if m_disc:
+
+    # Exact high-confidence numeric conversions.
+    specs=[
+        (r"(-?\d+(?:\.\d+)?)\s*(?:km|kilometers?)\b.*\b(?:miles?)\b","local.conversion.km_miles"),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:miles?)\b.*\b(?:km|kilometers?)\b","local.conversion.miles_km"),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:kg|kilograms?)\b.*\b(?:lb|pounds?)\b","local.conversion.kg_lb"),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:lb|pounds?)\b.*\b(?:kg|kilograms?)\b","local.conversion.lb_kg"),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:meters?|m)\b.*\b(?:feet|ft)\b","local.conversion.meters_feet"),
+        (r"(-?\d+(?:\.\d+)?)\s*(?:feet|ft)\b.*\b(?:meters?|m)\b","local.conversion.feet_meters"),
+    ]
+    for pattern,target in specs:
+        q=re.search(pattern,low,re.I)
+        if q:return target,{"value":float(q.group(1))}
+    q=re.search(r"(-?\d+(?:\.\d+)?)\s*(?:°?\s*c|celsius)\b.*\b(?:fahrenheit|°?f)\b",low,re.I)
+    if q:return "local.conversion.celsius_fahrenheit",{"value":float(q.group(1))}
+    q=re.search(r"(-?\d+(?:\.\d+)?)\s*(?:°?\s*f|fahrenheit)\b.*\b(?:celsius|°?c)\b",low,re.I)
+    if q:return "local.conversion.fahrenheit_celsius",{"value":float(q.group(1))}
+    q=re.search(r"(-?\d+(?:\.\d+)?)\s*%\s*(?:of|का|की|के)\s*(-?\d+(?:\.\d+)?)",low)
+    if q:return "local.math.percent",{"value":float(q.group(2)),"rate":float(q.group(1))}
+    q=re.search(r"(?:discount|छूट)\D*(\d+(?:\.\d+)?)\D*(?:%|percent)",low)
+    if q:
         nums=re.findall(r"\d+(?:\.\d+)?",low)
         if len(nums)>=2:return "local.finance.discount",{"value":float(nums[0]),"rate":float(nums[1])}
-    m_temp=re.search(r"\b(-?\d+(?:\.\d+)?)\s*(?:°?\s*c|celsius)\b.*\b(?:f|fahrenheit)\b",low)
-    if m_temp:return "local.conversion.celsius_fahrenheit",{"value":float(m_temp.group(1))}
-    if low.startswith(("uppercase ","upper ","capitalize ")):
-        return "local.text.upper",{"text":m.split(" ",1)[1] if " " in m else ""}
-    if low.startswith(("lowercase ","lower ")):
-        return "local.text.lower",{"text":m.split(" ",1)[1] if " " in m else ""}
-    if low.startswith(("slug ","make a slug ","create a slug ")):
-        return "local.text.slug",{"text":re.sub(r"^(make a slug|create a slug|slug)\s*","",m,flags=re.I)}
-    if low.startswith(("translate ","अनुवाद ","translate this ")):
-        body=re.sub(r"^(translate this|translate|अनुवाद)\s*","",m,flags=re.I).strip()
-        target="hi" if any(x in low for x in ("hindi","हिंदी","to hindi","में हिंदी")) else "en"
-        return "local.translation.local",{"text":body,"source":"en","target":target}
-    if low.startswith(("sha256 ","hash sha256 ")):
-        body=re.sub(r"^(hash sha256|sha256)\s*","",m,flags=re.I)
-        return "local.crypto.sha256",{"text":body}
-    expr_match=re.search(r"(?i)(?:what is|whats|solve|evaluate|calculate|compute)\s*([0-9\s()+\-*/%.×÷^]+)\s*\??$",m)
-    if expr_match:
-        expr=expr_match.group(1).strip().replace("×","*").replace("÷","/").replace("^","**")
-        if re.fullmatch(r"[0-9\s()+\-*/%.]+",expr):
-            return "core.calculator",{"expression":expr}
-    # Broader natural-language routing for the already executable local pack.
-    patterns=[
-        (r"\b(?:uppercase|upper|capitalise|capitalize)\b", "local.text.upper", "text"),
-        (r"\b(?:lowercase|lower)\b", "local.text.lower", "text"),
-        (r"\b(?:slug|url slug)\b", "local.text.slug", "text"),
-        (r"\b(?:base64 encode|encode base64)\b", "local.encoding.base64_encode", "text"),
-        (r"\b(?:base64 decode|decode base64)\b", "local.encoding.base64_decode", "text"),
-        (r"\b(?:json parse|parse json)\b", "local.json.parse", "value"),
-        (r"\b(?:json stringify|stringify json|json string)\b", "local.json.stringify", "value"),
-        (r"\b(?:sha1|hash sha1)\b", "local.crypto.sha1", "text"),
-        (r"\b(?:sha512|hash sha512)\b", "local.crypto.sha512", "text"),
-        (r"\b(?:uuid|generate uuid)\b", "local.crypto.uuid", "none"),
-        (r"\b(?:is prime|prime number)\b", "local.math.is_prime", "number"),
-        (r"\b(?:factorial)\b", "local.math.factorial", "number"),
-        (r"\b(?:square root|sqrt)\b", "local.math.sqrt", "number"),
-        (r"\b(?:celsius|centigrade)\b.*\b(?:fahrenheit|f)\b", "local.conversion.celsius_fahrenheit", "number"),
-        (r"\b(?:fahrenheit|f)\b.*\b(?:celsius|centigrade|c)\b", "local.conversion.fahrenheit_celsius", "number"),
-        (r"\b(?:kg|kilogram|kilograms)\b.*\b(?:lb|pound|pounds)\b", "local.conversion.kg_lb", "number"),
-        (r"\b(?:lb|pound|pounds)\b.*\b(?:kg|kilogram|kilograms)\b", "local.conversion.lb_kg", "number"),
-        (r"\b(?:today|current date|date today|आज की तारीख)\b", "core.datetime", "none"),
+
+    # Arithmetic, including natural questions without the word "calculate".
+    expr=re.search(r"(?i)(?:what is|what's|whats|solve|evaluate|calculate|compute)\s*([0-9\s()+\-*/%.×÷^]+)\s*\??$",m)
+    if expr:
+        e=expr.group(1).strip().replace("×","*").replace("÷","/").replace("^","**")
+        if re.fullmatch(r"[0-9\s()+\-*/%.]+",e):
+            return "core.calculator",{"expression":e}
+    if re.fullmatch(r"[\s0-9()+\-*/%.×÷^]+",m) and re.search(r"[+*/%×÷^\-]",m):
+        e=m.replace("×","*").replace("÷","/").replace("^","**")
+        return "core.calculator",{"expression":e}
+
+    # Direct text transforms.
+    for words,target in [
+        (("uppercase","upper","capitalise","capitalize"),"local.text.upper"),
+        (("lowercase","lower"),"local.text.lower"),
+        (("title case","titlecase"),"local.text.title"),
+        (("slug","url slug"),"local.text.slug"),
+        (("trim","strip whitespace"),"local.text.trim"),
+        (("reverse text","reverse"),"local.text.reverse"),
+        (("count words","word count"),"local.text.words"),
+        (("count characters","character count","char count"),"local.text.length"),
+    ]:
+        if any(re.search(r"\b"+re.escape(w)+r"\b",low) for w in words):
+            body=re.sub(r"(?i)^(?:please\s+)?(?:make|convert|do)\s+","",m)
+            for w in words: body=re.sub(r"(?i)\b"+re.escape(w)+r"\b","",body)
+            body=body.strip(" :,-")
+            return target,{"text":body}
+
+    # Encoding, hashing, JSON.
+    simple=[
+        (r"(?:base64\s+encode|encode\s+base64)","local.encoding.base64_encode"),
+        (r"(?:base64\s+decode|decode\s+base64)","local.encoding.base64_decode"),
+        (r"(?:sha256|hash\s+sha256)","local.crypto.sha256"),
+        (r"(?:sha1|hash\s+sha1)","local.crypto.sha1"),
+        (r"(?:sha512|hash\s+sha512)","local.crypto.sha512"),
+        (r"(?:md5|hash\s+md5)","local.crypto.md5"),
     ]
-    for pattern,target,kind in patterns:
-        if re.search(pattern,low,re.I):
-            nums=re.findall(r"-?\d+(?:\.\\d+)?",low)
-            if kind=="text":
-                body=re.sub(pattern,"",m,flags=re.I).strip(" :,-")
-                return target,{"text":body}
-            if kind=="value":
-                body=re.sub(pattern,"",m,flags=re.I).strip(" :,-")
-                try: value=json.loads(body)
-                except Exception: value=body
-                return target,{"value":value}
-            if kind=="number" and nums:
-                return target,{"value":float(nums[0])}
-            return target,{}
+    for pat,target in simple:
+        if re.search(pat,low,re.I):
+            body=re.sub(pat,"",m,flags=re.I).strip(" :,-")
+            return target,{"text":body}
+    if re.search(r"\b(?:generate|create)?\s*uuid\b",low): return "local.crypto.uuid",{}
+    if re.search(r"\b(?:json\s+parse|parse\s+json)\b",low):
+        body=re.sub(r"(?i)\b(?:json\s+parse|parse\s+json)\b","",m).strip(" :,-")
+        try: return "local.json.parse",{"value":json.loads(body)}
+        except Exception: return "local.json.parse",{"value":body}
+    if re.search(r"\b(?:json\s+stringify|stringify\s+json)\b",low):
+        body=re.sub(r"(?i)\b(?:json\s+stringify|stringify\s+json)\b","",m).strip(" :,-")
+        try: value=json.loads(body)
+        except Exception: value=body
+        return "local.json.stringify",{"value":value}
+
+    # Numeric/statistical operations.
+    number_ops=[
+        (r"(?:square\s+root|sqrt)\D*(-?\d+(?:\.\d+)?)","local.math.sqrt"),
+        (r"(?:factorial)\D*(\d+)","local.math.factorial"),
+        (r"(?:is\s+prime|prime\s+number)\D*(\d+)","local.math.is_prime"),
+        (r"(?:gcd)\D*(-?\d+)\D+(-?\d+)","local.math.gcd"),
+        (r"(?:lcm)\D*(-?\d+)\D+(-?\d+)","local.math.lcm"),
+    ]
+    for pat,target in number_ops:
+        q=re.search(pat,low,re.I)
+        if q:
+            if target.endswith((".gcd",".lcm")): return target,{"a":int(q.group(1)),"b":int(q.group(2))}
+            return target,{"value":float(q.group(1))}
+    if re.search(r"\b(?:today|current date|date today|आज की तारीख)\b",low): return "local.datetime.date",{}
+    if re.search(r"\b(?:current time|what time is it|time now|अभी समय)\b",low): return "local.datetime.time",{}
+
+    # Common structured/data capabilities.
+    structured=[
+        (r"\b(?:unique|dedupe|remove duplicates)\b","local.list.unique"),
+        (r"\b(?:sort|sort this list)\b","local.list.sort"),
+        (r"\b(?:first item|first element)\b","local.list.first"),
+        (r"\b(?:last item|last element)\b","local.list.last"),
+        (r"\b(?:count items|how many items)\b","local.list.count"),
+        (r"\b(?:escape html|html escape)\b","local.html.escape"),
+        (r"\b(?:strip html|remove html tags)\b","local.html.strip_tags"),
+        (r"\b(?:parse url|parse this url)\b","local.url.parse"),
+        (r"\b(?:is https|https url)\b","local.url.is_https"),
+    ]
+    for pat,target in structured:
+        if re.search(pat,low,re.I):
+            body=re.sub(pat,"",m,flags=re.I).strip(" :,-")
+            if target.startswith("local.list."):
+                try: return target,{"items":json.loads(body)}
+                except Exception: return target,{"items":[x.strip() for x in body.split(",") if x.strip()]}
+            return target,{"value":body,"text":body,"url":body}
+
+    # Finance and geometry.
+    q=re.search(r"\b(?:simple interest)\b.*?\b(?:principal|p)\D*(\d+(?:\.\d+)?)\D+.*?\b(?:rate|r)\D*(\d+(?:\.\d+)?)\D+.*?\b(?:time|years?|t)\D*(\d+(?:\.\d+)?)",low,re.I)
+    if q:return "local.finance.simple_interest",{"principal":float(q.group(1)),"rate":float(q.group(2)),"time":float(q.group(3))}
+    q=re.search(r"\b(?:circle area|area of circle)\b\D*(\d+(?:\.\d+)?)",low,re.I)
+    if q:return "local.geometry.circle_area",{"radius":float(q.group(1))}
+    q=re.search(r"\b(?:rectangle area|area of rectangle)\b\D*(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)",low,re.I)
+    if q:return "local.geometry.rectangle_area",{"length":float(q.group(1)),"width":float(q.group(2))}
+
+    # Fall back to the existing exact aliases.
     return None
 
 def calculator_expression(message: str) -> str:
