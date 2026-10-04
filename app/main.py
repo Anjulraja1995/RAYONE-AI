@@ -1,9 +1,9 @@
 from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
-import sqlite3, json, uuid, time, hashlib, os, base64, secrets, asyncio, ast, operator, math, re
+import sqlite3, json, uuid, time, hashlib, os, base64, secrets, asyncio, ast, operator, math, re, mimetypes
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -530,6 +530,15 @@ async def connectivity(_:str=Depends(auth)):
         except Exception as e:err=str(e)
         results.append({"id":p["id"],"name":p["name"],"ok":ok,"error":err})
     return {"database":True,"providers":results,"tools":len(rows("select id from tools where enabled=1")),"agents":len(rows("select id from agents where enabled=1")),"workflows":len(rows("select id from workflows where enabled=1"))}
+
+@app.get("/api/native/file/{filename}")
+def native_file(filename: str, _:str=Depends(auth)):
+    if Path(filename).name != filename or not re.match(r"^[A-Za-z0-9._-]+$",filename):
+        raise HTTPException(400,"Invalid artifact name")
+    p=ROOT/"data"/"workspace"/"native"/filename
+    if not p.exists() or not p.is_file():
+        raise HTTPException(404,"Artifact not found")
+    return FileResponse(p, media_type=mimetypes.guess_type(filename)[0] or "application/octet-stream", filename=filename)
 
 HTML=(ROOT / 'app' / 'rayone.html').read_text(encoding='utf-8')
 CONTROL_HTML=(ROOT / 'app' / 'dashboard.html').read_text(encoding='utf-8')
