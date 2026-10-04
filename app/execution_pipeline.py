@@ -35,6 +35,30 @@ def ensure_store():
         updated REAL NOT NULL
     )""")
 
+def _conversation_state(conversation_id):
+    if not conversation_id: return {}
+    row=_legacy().one("select * from conversation_state where conversation_id=?",(conversation_id,))
+    if not row: return {}
+    return {"conversation_id":row["conversation_id"],"pending_intent":row["pending_intent"],
+            "pending_kind":row["pending_kind"],"pending_message":row["pending_message"],
+            "last_request_id":row["last_request_id"],"last_state":row["last_state"],
+            "last_result":json.loads(row["last_result"]) if row["last_result"] else None}
+
+def _save_conversation_state(conversation_id, **fields):
+    if not conversation_id: return
+    legacy=_legacy(); cur=_conversation_state(conversation_id); cur.update(fields)
+    legacy.execute("""insert into conversation_state
+        (conversation_id,pending_intent,pending_kind,pending_message,last_request_id,last_state,last_result,updated)
+        values(?,?,?,?,?,?,?,?)
+        on conflict(conversation_id) do update set
+        pending_intent=excluded.pending_intent,pending_kind=excluded.pending_kind,
+        pending_message=excluded.pending_message,last_request_id=excluded.last_request_id,
+        last_state=excluded.last_state,last_result=excluded.last_result,updated=excluded.updated""",
+        (conversation_id,cur.get("pending_intent"),cur.get("pending_kind"),cur.get("pending_message"),
+         cur.get("last_request_id"),cur.get("last_state"),
+         legacy.dumps(cur.get("last_result")) if cur.get("last_result") is not None else None,legacy.now()))
+
+
 def _row(request_id):
     return _legacy().one("select * from execution_runs where request_id=?",(request_id,))
 
@@ -129,10 +153,42 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             context=list(reversed(rows or []))
         except Exception:
             context=[]
-    from .local_brain import build_plan, calculator_expression, resolve_followup
-    resolved=resolve_followup(message,context)
+    from .local_brain import build_plan, calculator_expression, resolve_followup, is_capability_question
+    state=_conversation_state(conversation_id)
+    pending={"intent":state.get("pending_intent"),"kind":state.get("pending_kind"),"message":state.get("pending_message")} if state.get("pending_intent") else None
+    if is_capability_question(message) and not kind:
+        cap_intent=classify(message)
+        low=message.lower()
+        cap_kind=("video" if "video" in low else "music" if "music" in low else
+                  "audio" if "audio" in low else "voice" if any(x in low for x in ("voice","tts","speech")) else
+                  "image" if cap_intent=="media" else cap_intent)
+        from .local_brain import local_response
+        answer=local_response(message,cap_intent)
+        out={"request_id":request_id,"state":"Complete","intent":"chat","pending":True,
+             "pending_intent":cap_intent,"pending_kind":cap_kind,"answer":answer,"provider":"local"}
+        _save_conversation_state(conversation_id,pending_intent=cap_intent,pending_kind=cap_kind,
+                                 pending_message=message,last_request_id=request_id,last_state="Complete",last_result=out)
+        _save(request_id,"Complete",intent="chat",target=cap_kind,result=out)
+        _trace(request_id,"Complete",{"pending":True,"intent":cap_intent})
+        return out
+    resolved=resolve_followup(message,context,pending=pending)
     intent=kind or resolved.get("intent") or (classify(message) if message else "tool")
+    if intent=="status":
+        rid=state.get("last_request_id")
+        last=_row(rid) if rid else None
+        answer=("Previous request is "+str(last["state"])+". "+
+                ("The result is ready." if last and last["state"]=="Complete" else
+                 ("It is waiting for approval." if last and last["state"]=="Awaiting Approval" else
+                  (str(last["error"] or "No additional error details.") if last else "There is no previous execution in this conversation."))))
+        out={"request_id":request_id,"state":"Complete","intent":"status","answer":answer,"last_request_id":rid,
+             "last_execution":json.loads(last["result"] or "{}") if last and last["result"] else None}
+        _save(request_id,"Complete",intent="status",result=out)
+        _trace(request_id,"Complete",{"status_for":rid})
+        return out
     effective_message=resolved.get("message") or message
+    if resolved.get("execute_pending")=="true":
+        _save_conversation_state(conversation_id,pending_intent=None,pending_kind=None,pending_message=None,
+                                 last_request_id=request_id,last_state="Executing",last_result=None)
     _save(request_id,"Understanding",intent=intent,target=target or "")
     _trace(request_id,"Understanding",{"message":message,"effective_message":effective_message,"intent":intent})
     plan=build_plan(effective_message,intent)
@@ -229,6 +285,8 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
         _trace(request_id,"Verifying",{"verified":True})
         _save(request_id,"Verifying",result=out)
         _save(request_id,"Complete",result=out)
+        _save_conversation_state(conversation_id,pending_intent=None,pending_kind=None,pending_message=None,
+                                 last_request_id=request_id,last_state="Complete",last_result=out)
         try: legacy.metric("execution.completed")
         except Exception: pass
         return out
