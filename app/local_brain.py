@@ -73,6 +73,41 @@ def resolve_followup(message: str, context: list[dict] | None = None, pending: d
             return {"intent":"media","kind":"music","message":"Create the requested music described in the previous conversation: "+recent[-2500:]}
     return {"intent":classify(msg),"kind":classify(msg),"message":msg}
 
+
+def infer_local_tool(message: str):
+    """Map common natural requests to a real registered local capability."""
+    m=str(message or "").strip()
+    low=m.lower()
+    if re.search(r"\b\d+(?:\.\d+)?\s*(km|kilometers?)\b.*\b(miles?)\b",low):
+        n=float(re.search(r"\b(\d+(?:\.\d+)?)\s*(?:km|kilometers?)\b",low).group(1))
+        return "local.conversion.km_miles",{"value":n}
+    if re.search(r"\b\d+(?:\.\d+)?\s*(miles?)\b.*\b(km|kilometers?)\b",low):
+        n=float(re.search(r"\b(\d+(?:\.\d+)?)\s*(?:miles?)\b",low).group(1))
+        return "local.conversion.miles_km",{"value":n}
+    m_pct=re.search(r"\b(\d+(?:\.\d+)?)\s*%\s*(?:of|का|की|के)\s*(\d+(?:\.\d+)?)",low)
+    if m_pct:
+        return "local.math.percent",{"value":float(m_pct.group(2)),"rate":float(m_pct.group(1))}
+    m_disc=re.search(r"(?:discount|छूट)\D*(\d+(?:\.\d+)?)\D*(?:%|percent)",low)
+    if m_disc:
+        nums=re.findall(r"\d+(?:\.\d+)?",low)
+        if len(nums)>=2:return "local.finance.discount",{"value":float(nums[0]),"rate":float(nums[1])}
+    m_temp=re.search(r"\b(-?\d+(?:\.\d+)?)\s*(?:°?\s*c|celsius)\b.*\b(?:f|fahrenheit)\b",low)
+    if m_temp:return "local.conversion.celsius_fahrenheit",{"value":float(m_temp.group(1))}
+    if low.startswith(("uppercase ","upper ","capitalize ")):
+        return "local.text.upper",{"text":m.split(" ",1)[1] if " " in m else ""}
+    if low.startswith(("lowercase ","lower ")):
+        return "local.text.lower",{"text":m.split(" ",1)[1] if " " in m else ""}
+    if low.startswith(("slug ","make a slug ","create a slug ")):
+        return "local.text.slug",{"text":re.sub(r"^(make a slug|create a slug|slug)\s*","",m,flags=re.I)}
+    if low.startswith(("translate ","अनुवाद ","translate this ")):
+        body=re.sub(r"^(translate this|translate|अनुवाद)\s*","",m,flags=re.I).strip()
+        target="hi" if any(x in low for x in ("hindi","हिंदी","to hindi","में हिंदी")) else "en"
+        return "local.translation.local",{"text":body,"source":"en","target":target}
+    if low.startswith(("sha256 ","hash sha256 ")):
+        body=re.sub(r"^(hash sha256|sha256)\s*","",m,flags=re.I)
+        return "local.crypto.sha256",{"text":body}
+    return None
+
 def calculator_expression(message: str) -> str:
     m=str(message or "").strip()
     m=re.sub(r"^(please\s+)?(calculate|compute|calculator|math)\s*[:\-]?\s*","",m,flags=re.I)
