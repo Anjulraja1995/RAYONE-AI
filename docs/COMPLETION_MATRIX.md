@@ -60,3 +60,11 @@ The repository now includes:
 - Regression tests for the local tool pack, workflow validation and VORQYON verification.
 
 These are counted as implemented repository capabilities. Each catalog entry is registered, callable through the shared execution engine, and covered by the expanded capability-count regression test. External account authorization, device signing and external platform approval remain environment-specific rather than paid core dependencies.
+
+
+## Latest verified execution pass — 2026-10-04
+- Local browser fetch + HTML text extraction adapter: implemented and regression-tested.
+- Local OCR adapter: implemented with Tesseract/PyTesseract detection and explicit unavailable state.
+- Local media probe: implemented for MIME/file metadata, image dimensions and WAV audio metadata.
+- Latest GitHub Actions regression run: PASS.
+- Remaining capabilities that depend on an external runtime remain explicitly adapter-gated (full browser automation, production OCR engine, real media generation, authenticated third-party connectors, APK/desktop packaging in target environments).
