@@ -126,6 +126,15 @@ def approvals(_:str=Depends(auth)):
     return legacy.rows("select * from approvals order by created desc limit 200")
 
 @router.post("/approvals/{id}")
+def _verify_result(result, expected=None):
+    ok=result is not None
+    if isinstance(result,dict):
+        if result.get("status") in {"failed","error"}: ok=False
+        if result.get("native") and result.get("size") is not None and int(result.get("size",0))<=0: ok=False
+        if result.get("verified") is False: ok=False
+    if expected is not None and ok: ok=(result==expected)
+    return {"ok":bool(ok),"expected":expected,"result_present":result is not None}
+
 async def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
     if x.decision not in {"approved","rejected"}: raise HTTPException(400,"decision must be approved or rejected")
     item=legacy.one("select * from approvals where id=?",(id,))
