@@ -234,3 +234,29 @@ def test_core_health_reports_local_control_plane():
     assert data['name']=='RAYONE AI'
     assert data['database']=='sqlite'
     assert data['mode']=='free-local-first'
+
+
+def test_unified_execution_pipeline():
+    t=token(); hh=h(t)
+    payload={"name":"local.math.sum","args":{"values":[2,3]},"request_id":"core-pipeline-tool"}
+    r=client.post("/api/v2/tools/run",headers=hh,json=payload)
+    assert r.status_code==200 and r.json()["state"]=="Complete" and r.json()["result"]==5
+    again=client.post("/api/v2/tools/run",headers=hh,json=payload)
+    assert again.status_code==200 and again.json()["result"]==5
+    chat=client.post("/api/v2/assistant/chat",headers=hh,json={"message":"calculate 7+5","request_id":"core-pipeline-chat"})
+    assert chat.status_code==200 and chat.json()["result"]==12 and chat.json()["state"]=="Complete"
+    state=client.get("/api/v2/execution/core-pipeline-chat",headers=hh)
+    assert state.status_code==200 and state.json()["state"]=="Complete"
+
+def test_vorqyon_approval_pipeline():
+    t=token(); hh=h(t)
+    p=client.post("/api/v2/vorqyon/execute",headers=hh,json={"mode":"tool","target":"local.math.sum","args":{"values":[4,5]},"expected":9,"require_approval":True,"request_id":"core-pipeline-approval"})
+    assert p.status_code==200 and p.json()["state"]=="Awaiting Approval"
+    aid=p.json()["approval_id"]
+    d=client.post("/api/v2/approvals/"+aid,headers=hh,json={"decision":"approved"})
+    assert d.status_code==200 and d.json()["result"]["result"]==9
+
+def test_workflow_validation_pipeline():
+    t=token(); hh=h(t)
+    r=client.post("/api/v2/workflows/validate",headers=hh,json={"steps":[{"type":"tool","name":"local.text.upper","args":{"text":"hello"}}]})
+    assert r.status_code==200 and r.json()["valid"] is True
