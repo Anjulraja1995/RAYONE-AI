@@ -85,7 +85,11 @@ External services are intentionally adapter-based: RAYONE does not fabricate a p
 
 ## Zero-cost/local-first rule
 
-The core platform does not require a paid AI provider. It can run locally with deterministic tools and local fallback behavior. External AI, media, messaging or cloud connectors become active only when their corresponding provider/credential is configured.
+The core platform does not require a paid AI provider. It can run locally with deterministic tools and local fallback behavior. No paid API, subscription or credit is a mandatory dependency.
+
+RAYONE now ships an executable built-in local tool pack covering text, math, JSON, encoding, cryptographic hashing, regex, date/time, lists and planning operations. These tools are registered in the same tool registry and run through the same execution engine as external tools.
+
+External AI, media, messaging or cloud connectors are optional authorization/integration layers. They must never be represented as active until credentials or a local runtime actually makes them executable.
 
 
 ## Completion-layer capabilities
@@ -107,3 +111,10 @@ The control plane also includes:
 ### Native/External adapter boundary
 
 RAYONE exposes real adapter contracts for capabilities that require an external runtime, credential, model, browser binary or media engine. It does not pretend those services are active when they are not configured. This keeps the local-first core functional while allowing production adapters to be attached without changing the control plane.
+
+
+## Universal execution rule
+
+A capability is considered implemented only when its UI/control surface, backend contract, execution path, error handling and regression test exist. A connector registration screen alone is not counted as a completed integration.
+
+The workflow module includes a live draft builder, validation endpoint and executable saved workflows. The local tool catalog is available at `/api/v2/tools/catalog` and execution at `/api/v2/tools/run`.
