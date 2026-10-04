@@ -131,3 +131,30 @@ def test_vorqyon_execute_and_verify():
     t=token(); hh=h(t)
     r=client.post('/api/v2/vorqyon/execute',headers={**hh,'Content-Type':'application/json'},json={'mode':'tool','target':'local.math.sum','args':{'values':[1,2,3]},'expected':6})
     assert r.status_code==200 and r.json()['verification']['ok'] is True
+
+
+def test_scheduler_once_is_single_shot_and_supports_tools():
+    import time
+    t=token(); hh=h(t)
+    r=client.post('/api/v2/automation/once',headers={**hh,'Content-Type':'application/json'},json={
+        'name':'once-tool','expression':str(time.time()-1),'action':'tool',
+        'payload':{'name':'local.math.sum','args':{'values':[2,3]}}
+    })
+    assert r.status_code==200
+    sid=r.json()['id']
+    first=client.post('/api/v2/automation/run-due',headers=hh)
+    assert first.status_code==200 and any(x['id']==sid and x['ok'] for x in first.json())
+    schedules=client.get('/api/v2/automation/schedules',headers=hh).json()
+    row=next(x for x in schedules if x['id']==sid)
+    assert row['enabled']==0 and row['next_run'] is None
+    second=client.post('/api/v2/automation/run-due',headers=hh)
+    assert second.status_code==200 and not any(x['id']==sid for x in second.json())
+
+
+def test_local_media_probe_endpoint():
+    t=token(); hh=h(t)
+    r=client.post('/api/v2/files/upload',headers=hh,files={'file':('probe.txt',b'hello','text/plain')})
+    assert r.status_code==200
+    fid=r.json()['id']
+    p=client.post('/api/v2/local/media/probe',headers={**hh,'Content-Type':'application/json'},json={'file_id':fid})
+    assert p.status_code==200 and p.json()['adapter']=='local-media-probe'
