@@ -9,6 +9,8 @@ from datetime import datetime, timezone, timedelta
 FAMILIES = {
     "web": ["fetch","search","extract_text","parse_url"],
     "translation": ["local"],
+    "documents": ["metadata","extract_text"],
+    "media_native": ["probe"],
     "text": [
         "lower",
         "upper",
@@ -1231,7 +1233,24 @@ def _value(a):
         if k in a: return a[k]
     return ""
 
-def execute_local(family, op, a):
+def execute_local(family, op, a):    if family=="documents":
+        if op=="metadata":
+            name=str(a.get("name",a.get("value","")))
+            return {"name":name,"extension":Path(name).suffix.lower(),"stem":Path(name).stem,"mime":a.get("mime","application/octet-stream")}
+        if op=="extract_text":
+            value=a.get("data",a.get("value",""))
+            return value if isinstance(value,str) else str(value)
+    if family=="media_native" and op=="probe":
+        path=str(a.get("path",a.get("value","")))
+        p=Path(path)
+        if not p.exists(): raise FileNotFoundError(path)
+        out={"path":str(p),"size":p.stat().st_size,"mime":__import__("mimetypes").guess_type(p.name)[0] or "application/octet-stream"}
+        try:
+            from PIL import Image
+            with Image.open(p) as im: out.update({"kind":"image","width":im.width,"height":im.height,"format":im.format})
+        except Exception: pass
+        return out
+
     if family=="web":
         if op=="parse_url":
             u=urllib.parse.urlparse(str(a.get("url",a.get("value",""))))
