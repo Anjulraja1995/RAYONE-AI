@@ -245,8 +245,17 @@ def calc(expr):
 
 # Built-in zero-cost tool pack. Every entry below is locally executable and has no paid-service dependency.
 from .local_tools import build_builtin_pack, TOTAL_CAPABILITIES
+from .native_creative import generate_image, generate_design, generate_audio, generate_music, generate_voice, generate_video
 
 BUILTIN_PACK = build_builtin_pack()
+BUILTIN_PACK.update({
+    "image": {"generate": generate_image},
+    "design": {"generate": generate_design},
+    "audio": {"generate": generate_audio},
+    "music": {"generate": generate_music},
+    "voice": {"generate": generate_voice},
+    "video": {"generate": generate_video},
+})
 
 
 def register_builtin_pack():
