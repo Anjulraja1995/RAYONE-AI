@@ -47,7 +47,7 @@ def test_conversational_pending_followup_and_status():
     h=login()
     cid="final-conversation-followup"
     q=client.post("/api/v2/assistant/chat",headers=h,json={
-        "message":"Can you make a nature image?","conversation_id":cid,
+        "message":"Tum ek nature image bana sakte ho","conversation_id":cid,
         "request_id":"capability-question"
     })
     assert q.status_code==200 and q.json().get("pending") is True
