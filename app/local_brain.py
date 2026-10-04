@@ -6,6 +6,7 @@ providers can still answer open-ended language through the provider adapter.
 """
 from __future__ import annotations
 import re
+import json
 from typing import Any
 
 def _has(text, *terms):
@@ -121,28 +122,28 @@ def infer_local_tool(message: str):
             return "core.calculator",{"expression":expr}
     # Broader natural-language routing for the already executable local pack.
     patterns=[
-        (r"\\b(?:uppercase|upper|capitalise|capitalize)\\b", "local.text.upper", "text"),
-        (r"\\b(?:lowercase|lower)\\b", "local.text.lower", "text"),
-        (r"\\b(?:slug|url slug)\\b", "local.text.slug", "text"),
-        (r"\\b(?:base64 encode|encode base64)\\b", "local.encoding.base64_encode", "text"),
-        (r"\\b(?:base64 decode|decode base64)\\b", "local.encoding.base64_decode", "text"),
-        (r"\\b(?:json parse|parse json)\\b", "local.json.parse", "value"),
-        (r"\\b(?:json stringify|stringify json|json string)\\b", "local.json.stringify", "value"),
-        (r"\\b(?:sha1|hash sha1)\\b", "local.crypto.sha1", "text"),
-        (r"\\b(?:sha512|hash sha512)\\b", "local.crypto.sha512", "text"),
-        (r"\\b(?:uuid|generate uuid)\\b", "local.crypto.uuid", "none"),
-        (r"\\b(?:is prime|prime number)\\b", "local.math.is_prime", "number"),
-        (r"\\b(?:factorial)\\b", "local.math.factorial", "number"),
-        (r"\\b(?:square root|sqrt)\\b", "local.math.sqrt", "number"),
-        (r"\\b(?:celsius|centigrade)\\b.*\\b(?:fahrenheit|f)\\b", "local.conversion.celsius_fahrenheit", "number"),
-        (r"\\b(?:fahrenheit|f)\\b.*\\b(?:celsius|centigrade|c)\\b", "local.conversion.fahrenheit_celsius", "number"),
-        (r"\\b(?:kg|kilogram|kilograms)\\b.*\\b(?:lb|pound|pounds)\\b", "local.conversion.kg_lb", "number"),
-        (r"\\b(?:lb|pound|pounds)\\b.*\\b(?:kg|kilogram|kilograms)\\b", "local.conversion.lb_kg", "number"),
-        (r"\\b(?:today|current date|date today|आज की तारीख)\\b", "core.datetime", "none"),
+        (r"\b(?:uppercase|upper|capitalise|capitalize)\b", "local.text.upper", "text"),
+        (r"\b(?:lowercase|lower)\b", "local.text.lower", "text"),
+        (r"\b(?:slug|url slug)\b", "local.text.slug", "text"),
+        (r"\b(?:base64 encode|encode base64)\b", "local.encoding.base64_encode", "text"),
+        (r"\b(?:base64 decode|decode base64)\b", "local.encoding.base64_decode", "text"),
+        (r"\b(?:json parse|parse json)\b", "local.json.parse", "value"),
+        (r"\b(?:json stringify|stringify json|json string)\b", "local.json.stringify", "value"),
+        (r"\b(?:sha1|hash sha1)\b", "local.crypto.sha1", "text"),
+        (r"\b(?:sha512|hash sha512)\b", "local.crypto.sha512", "text"),
+        (r"\b(?:uuid|generate uuid)\b", "local.crypto.uuid", "none"),
+        (r"\b(?:is prime|prime number)\b", "local.math.is_prime", "number"),
+        (r"\b(?:factorial)\b", "local.math.factorial", "number"),
+        (r"\b(?:square root|sqrt)\b", "local.math.sqrt", "number"),
+        (r"\b(?:celsius|centigrade)\\b.*\\b(?:fahrenheit|f)\b", "local.conversion.celsius_fahrenheit", "number"),
+        (r"\b(?:fahrenheit|f)\\b.*\\b(?:celsius|centigrade|c)\b", "local.conversion.fahrenheit_celsius", "number"),
+        (r"\b(?:kg|kilogram|kilograms)\\b.*\\b(?:lb|pound|pounds)\b", "local.conversion.kg_lb", "number"),
+        (r"\b(?:lb|pound|pounds)\\b.*\\b(?:kg|kilogram|kilograms)\b", "local.conversion.lb_kg", "number"),
+        (r"\b(?:today|current date|date today|आज की तारीख)\b", "core.datetime", "none"),
     ]
     for pattern,target,kind in patterns:
         if re.search(pattern,low,re.I):
-            nums=re.findall(r"-?\\d+(?:\\.\\d+)?",low)
+            nums=re.findall(r"-?\d+(?:\\.\\d+)?",low)
             if kind=="text":
                 body=re.sub(pattern,"",m,flags=re.I).strip(" :,-")
                 return target,{"text":body}
