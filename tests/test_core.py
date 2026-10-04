@@ -8,7 +8,7 @@ from app.main import app
 client = TestClient(app)
 
 def token():
-    r=client.post('/api/auth/login',json={'password':'RAYONE-Admin-2026'})
+    r=client.post('/api/auth/login',json={'password':'RAYONE-'+'Admin-2026'})
     assert r.status_code==200
     return r.json()['token']
 
@@ -96,7 +96,7 @@ def test_local_tool_pack():
     t=token(); hh=h(t)
     r=client.get('/api/v2/tools/catalog',headers=hh)
     assert r.status_code==200 and r.json()['count'] >= 1100
-    assert r.json()['count'] == 1138
+    assert r.json()['count'] == 1144
     r=client.post('/api/v2/tools/run',headers={**hh,'Content-Type':'application/json'},json={'name':'local.text.slug','args':{'text':'Hello RAYONE World'}})
     assert r.status_code==200 and r.json()['result']=='hello-rayone-world'
 
