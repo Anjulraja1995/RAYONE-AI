@@ -192,6 +192,22 @@ async def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
             rr=await c.request(method,"https://api.github.com"+path,headers=headers,json=body)
             result={"status":rr.status_code,"data":rr.json() if "application/json" in rr.headers.get("content-type","") else rr.text[:20000]}
             if rr.status_code>=400: raise HTTPException(rr.status_code,"GitHub request failed: "+rr.text[:2000])
+    elif x.decision=="approved" and item["action"].startswith("connector."):
+        from .connector_adapters import execute as connector_execute, normalize_kind
+        payload=j(item["payload"]); cid=str(payload.get("connector_id",""))
+        c_row=legacy.one("select * from connectors where id=? and enabled=1",(cid,))
+        if not c_row: raise HTTPException(404,"Connector not found or disabled")
+        cfg=j(c_row["config"]); req=payload.get("payload") or {}
+        method=item["action"].split(".",1)[1].upper()
+        cfg["allow_mutations"]=True
+        try:
+            result=await connector_execute(c_row["base_url"],normalize_kind(c_row["kind"]),cfg,method,
+                                            req.get("path",""),req.get("params") or {},req.get("body") or {})
+        except Exception as ex:
+            raise HTTPException(502,str(ex))
+        verification=_verify_result(result)
+        result={"execution":result,"verification":verification}
+        audit("connector.approved_execute",c_row["name"],{"approval_id":id,"verified":verification["ok"]})
     elif x.decision=="approved" and item["action"]=="vorqyon.execute":
         payload=j(item["payload"]); mode=str(payload.get("mode","")); target=str(payload.get("target","")); args=payload.get("args") or {}
         if mode=="tool": result=await legacy.execute_tool_internal(target,args)
