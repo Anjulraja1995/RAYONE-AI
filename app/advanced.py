@@ -175,7 +175,7 @@ def classify(message):
 
 async def research(url_or_query):
     from .native_engines import research as native_research
-    return await native_research(url_or_query, max_sources=5)
+    return native_research(url_or_query, max_sources=5)
 def _conversation_turn(x, rid, answer="", provider="", append_user=True):
     cid=x.conversation_id
     if cid and not legacy.one("select id from conversations where id=?",(cid,)): cid=None
