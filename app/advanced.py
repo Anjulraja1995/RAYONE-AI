@@ -61,6 +61,7 @@ class AssistantIn(BaseModel):
     model_id: str|None=None
     require_approval: bool=False
     conversation_id: str|None=None
+    request_id: str|None=None
 
 class ApprovalIn(BaseModel):
     decision: str
@@ -131,31 +132,27 @@ async def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
     if not item: raise HTTPException(404,"Approval not found")
     if item["status"]!="pending": raise HTTPException(409,"Approval already decided")
     result=None
-    if x.decision=="approved" and item["action"].startswith("github."):
+    if x.decision=="approved" and item["action"]=="pipeline.execute":
+        from .execution_pipeline import execute_approved
+        result=await execute_approved(j(item["payload"]))
+    elif x.decision=="approved" and item["action"].startswith("github."):
         payload=j(item["payload"]); method=item["action"].split(".",1)[1]
         path=str(payload.get("path",""))
         if not _gh_allowed(path): raise HTTPException(400,"GitHub path not allowed")
         if not os.getenv("GITHUB_TOKEN"): raise HTTPException(503,"GITHUB_TOKEN is not configured")
-        headers=_gh_headers()
-        body=payload.get("body") or {}
+        headers=_gh_headers(); body=payload.get("body") or {}
         async with legacy.httpx.AsyncClient(timeout=30) as c:
-            r=await c.request(method,"https://api.github.com"+path,headers=headers,json=body)
-            result={"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
-            if r.status_code>=400: raise HTTPException(r.status_code,"GitHub request failed: "+r.text[:2000])
-    if x.decision=="approved" and item["action"]=="vorqyon.execute":
-        payload=j(item["payload"])
-        mode=str(payload.get("mode",""))
-        target=str(payload.get("target",""))
-        args=payload.get("args") or {}
-        if mode=="tool":
-            result=await legacy.execute_tool_internal(target,args)
-        elif mode=="workflow":
-            result=await legacy.run_workflow_internal(target,args)
+            rr=await c.request(method,"https://api.github.com"+path,headers=headers,json=body)
+            result={"status":rr.status_code,"data":rr.json() if "application/json" in rr.headers.get("content-type","") else rr.text[:20000]}
+            if rr.status_code>=400: raise HTTPException(rr.status_code,"GitHub request failed: "+rr.text[:2000])
+    elif x.decision=="approved" and item["action"]=="vorqyon.execute":
+        payload=j(item["payload"]); mode=str(payload.get("mode","")); target=str(payload.get("target","")); args=payload.get("args") or {}
+        if mode=="tool": result=await legacy.execute_tool_internal(target,args)
+        elif mode=="workflow": result=await legacy.run_workflow_internal(target,args)
         elif mode=="chat":
             answer,provider=await legacy.provider_chat(target,args.get("model_id"))
             result={"answer":answer or ("RAYONE local core received: "+target),"provider":provider or "local"}
-        else:
-            raise HTTPException(400,"Unsupported approved VORQYON mode")
+        else: raise HTTPException(400,"Unsupported approved VORQYON mode")
         verification=_verify_result(result,payload.get("expected"))
         result={"execution":result,"verification":verification}
         audit("vorqyon.approved_execute","execution",{"approval_id":id,"verified":verification["ok"]})
@@ -214,65 +211,21 @@ def _auto_memory(message, answer, conversation_id):
     legacy.execute("insert into memory_index values(?,?,?,?,?)",(str(uuid.uuid4()),mid,legacy.dumps(sorted(_tokens(content))),hashlib.sha256(content.encode()).hexdigest(),t))
 
 async def assistant_run(x):
-    rid=str(uuid.uuid4()); metric("assistant.requests")
-    cid=_conversation_turn(x,rid)
-    x.conversation_id=cid
-    trace("Idle",rid)
-    trace("Understanding",rid,{"message":x.message})
-    intent=classify(x.message)
-    trace("Planning",rid,{"intent":intent})
-    if x.require_approval:
-        aid=str(uuid.uuid4())
-        legacy.execute("insert into approvals values(?,?,?,?,?,?,?)",(aid,"assistant_action",intent,legacy.dumps(x.model_dump()),"pending",legacy.now(),None))
-        trace("Complete",rid,{"approval_required":True,"approval_id":aid})
-        return {"request_id":rid,"state":"Awaiting Approval","approval_id":aid}
-    if intent=="tool":
-        expr=re.sub(r"^(please\s+)?(calculate|compute)\s+","",x.message.strip(),flags=re.I)
-        trace("Tool Use",rid,{"tool":"core.calculator"})
-        result=await legacy.execute_tool_internal("core.calculator",{"expression":expr})
-        trace("Verifying",rid,{"result":result})
-        trace("Complete",rid)
-        _conversation_turn(x,rid,result,"local",False); _auto_memory(x.message,str(result),cid)
-        return {"request_id":rid,"state":"Complete","intent":intent,"result":result,"conversation_id":cid}
-    if intent=="research":
-        trace("Researching",rid)
-        result=await research(x.message.strip())
-        trace("Verifying",rid,{"sources":1 if result.get("source") else 0})
-        trace("Complete",rid)
-        _conversation_turn(x,rid,result.get("answer") if isinstance(result,dict) else str(result),"research",False); _auto_memory(x.message,str(result),cid)
-        return {"request_id":rid,"state":"Complete","intent":intent,"result":result,"conversation_id":cid}
-    if intent=="media":
-        trace("Executing",rid,{"media":True})
-        low=x.message.lower()
-        if "video" in low:
-            kind="video"
-        elif "music" in low:
-            kind="music"
-        elif "audio" in low:
-            kind="audio"
-        elif "voice" in low or "tts" in low or "speech" in low:
-            kind="voice"
-        else:
-            kind="image"
-        result=legacy.BUILTIN_PACK[kind]["generate"]({"prompt":x.message})
-        mid=str(uuid.uuid4()); t=legacy.now()
-        legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,kind,"completed",legacy.dumps({"prompt":x.message}),legacy.dumps(result),"native",t,t))
-        trace("Verifying",rid,{"media_job_id":mid,"native":True})
-        trace("Complete",rid)
-        msg=f"Native {kind} artifact generated."; _conversation_turn(x,rid,msg,"native",False); _auto_memory(x.message,msg,cid)
-        return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"status":"completed","provider":"native","result":result,"message":msg,"conversation_id":cid}
-    trace("Executing",rid)
-    answer,provider=await legacy.provider_chat(x.message,x.model_id)
-    if answer is None:
-        mem=legacy.rows("select content from memories where content like ? order by created desc limit 5",(f"%{x.message[:40]}%",))
-        answer="RAYONE local core received: "+x.message
-        if mem: answer+="\nRelevant memory: "+" ".join(m["content"] for m in mem)
-        provider="local"
-    trace("Verifying",rid,{"provider":provider})
-    trace("Complete",rid)
-    metric("assistant.completed")
-    _conversation_turn(x,rid,answer,provider,False); _auto_memory(x.message,answer,cid)
-    return {"request_id":rid,"state":"Complete","intent":intent,"provider":provider,"answer":answer,"conversation_id":cid}
+    from .execution_pipeline import run_pipeline
+    result=await run_pipeline(message=x.message,model_id=x.model_id,conversation_id=x.conversation_id,
+                              require_approval=x.require_approval,request_id=getattr(x,"request_id",None))
+    cid=x.conversation_id
+    if result.get("state")=="Complete":
+        answer=result.get("answer") or result.get("message") or result.get("result")
+        if answer is not None:
+            try:
+                cid=cid or _conversation_turn(x,result["request_id"],"", "", True)
+                _conversation_turn(x,result["request_id"],answer,result.get("provider","local"),False)
+                _auto_memory(x.message,str(answer),cid)
+                result["conversation_id"]=cid
+            except Exception:
+                pass
+    return result
 
 @router.post("/assistant/chat")
 async def assistant_chat(x:AssistantIn,_:str=Depends(auth)):
@@ -875,3 +828,51 @@ async def provider_health(_:str=Depends(auth)):
         url=(p["base_url"] or "").rstrip("/")
         item={"id":p["id"],"name":p["name"],"base_url":url,"ok":False}
         if url:
+
+# Unified execution control endpoints
+@router.get("/execution/{request_id}")
+def execution_state(request_id:str,_:str=Depends(auth)):
+    from .execution_pipeline import state_snapshot
+    item=state_snapshot(request_id)
+    if not item: raise HTTPException(404,"Execution not found")
+    return item
+
+@router.get("/tools/catalog")
+def tool_catalog(_:str=Depends(auth)):
+    data=legacy.rows("select id,name,description,kind,enabled from tools order by id")
+    return {"count":len(data),"tools":data}
+
+@router.post("/tools/run")
+async def tool_run(payload:dict,_:str=Depends(auth)):
+    from .execution_pipeline import run_pipeline
+    name=str(payload.get("name","")).strip()
+    if not name: raise HTTPException(400,"name required")
+    return await run_pipeline(message="",kind="tool",target=name,args=payload.get("args") or {},request_id=payload.get("request_id"))
+
+@router.post("/vorqyon/execute")
+async def vorqyon_execute(payload:dict,_:str=Depends(auth)):
+    from .execution_pipeline import run_pipeline
+    mode=str(payload.get("mode","")).strip()
+    target=str(payload.get("target","")).strip()
+    if not mode or not target: raise HTTPException(400,"mode and target required")
+    result=await run_pipeline(message=str(payload.get("message",target)),kind=mode,target=target,args=payload.get("args") or {},
+                              require_approval=bool(payload.get("require_approval")),request_id=payload.get("request_id"))
+    if result.get("state")=="Complete":
+        expected=payload.get("expected")
+        value=result.get("result") if mode!="chat" else result.get("answer")
+        result["verification"]=_verify_result(value,expected)
+        if not result["verification"]["ok"]: raise HTTPException(500,"Execution verification failed")
+    return result
+
+@router.post("/workflows/validate")
+def validate_workflow(payload:dict,_:str=Depends(auth)):
+    steps=payload.get("steps")
+    if not isinstance(steps,list) or not steps: return {"valid":False,"errors":["steps must be a non-empty list"]}
+    errors=[]
+    for i,step in enumerate(steps):
+        if not isinstance(step,dict): errors.append(f"step {i}: expected object"); continue
+        kind=step.get("type",step.get("action",""))
+        if kind not in {"tool","chat","memory","value","set","transform"}: errors.append(f"step {i}: unsupported action '{kind}'")
+        if kind=="tool" and not legacy.one("select id from tools where id=? and enabled=1",(str(step.get("name","")),)):
+            errors.append(f"step {i}: tool not found or disabled")
+    return {"valid":not errors,"errors":errors}
