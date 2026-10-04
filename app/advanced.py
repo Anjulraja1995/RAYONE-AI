@@ -137,6 +137,23 @@ async def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
             r=await c.request(method,"https://api.github.com"+path,headers=headers,json=body)
             result={"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
             if r.status_code>=400: raise HTTPException(r.status_code,"GitHub request failed: "+r.text[:2000])
+    if x.decision=="approved" and item["action"]=="vorqyon.execute":
+        payload=j(item["payload"])
+        mode=str(payload.get("mode",""))
+        target=str(payload.get("target",""))
+        args=payload.get("args") or {}
+        if mode=="tool":
+            result=await legacy.execute_tool_internal(target,args)
+        elif mode=="workflow":
+            result=await legacy.run_workflow_internal(target,args)
+        elif mode=="chat":
+            answer,provider=await legacy.provider_chat(target,args.get("model_id"))
+            result={"answer":answer or ("RAYONE local core received: "+target),"provider":provider or "local"}
+        else:
+            raise HTTPException(400,"Unsupported approved VORQYON mode")
+        verification=_verify_result(result,payload.get("expected"))
+        result={"execution":result,"verification":verification}
+        audit("vorqyon.approved_execute","execution",{"approval_id":id,"verified":verification["ok"]})
     legacy.execute("update approvals set status=?,decided=? where id=?",(x.decision,legacy.now(),id))
     audit("approval."+x.decision,"approval",{"id":id,"result":result})
     return {"ok":True,"status":x.decision,"result":result}
