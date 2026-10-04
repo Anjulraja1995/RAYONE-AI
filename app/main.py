@@ -96,7 +96,7 @@ def init():
 init()
 
 class LoginIn(BaseModel): password: str
-class Chat(BaseModel): message: str = Field(min_length=1); project_id: str|None = None; agent_id: str|None = None; model_id: str|None = None
+class Chat(BaseModel): message: str = Field(min_length=1); project_id: str|None = None; agent_id: str|None = None; model_id: str|None = None; request_id: str|None = None
 class ProviderIn(BaseModel): name: str; kind: str = "openai_compatible"; base_url: str = ""; api_key: str = ""; enabled: bool = True; config: dict = {}
 class ModelIn(BaseModel): name: str; provider_id: str|None = None; model: str; enabled: bool = True; config: dict = {}
 class MemoryIn(BaseModel): scope: str = "global"; content: str; metadata: dict = {}
@@ -349,7 +349,10 @@ async def execute_tool_internal(name,args):
     emit("tool.completed",{"tool":name});audit("execute","tool",{"name":name});return result
 
 @app.post("/api/tools/execute")
-async def execute_tool(x:ToolCall,_:str=Depends(auth)):return {"ok":True,"tool":x.name,"result":await execute_tool_internal(x.name,x.args)}
+async def execute_tool(x:ToolCall,_:str=Depends(auth)):
+    from .execution_pipeline import run_pipeline
+    result=await run_pipeline(message="",kind="tool",target=x.name,args=x.args)
+    return {"ok":True,"tool":x.name,"result":result.get("result"),"request_id":result.get("request_id"),"state":result.get("state")}
 
 async def provider_chat(message, model_id=None):
     if model_id:
@@ -369,23 +372,13 @@ async def provider_chat(message, model_id=None):
 
 @app.post("/api/chat")
 async def chat(x:Chat,_:str=Depends(auth)):
-    # lightweight local planner: detect common tool intents before model routing
-    msg=x.message.strip(); low=msg.lower()
-    try:
-        if low.startswith("calculate "):
-            return {"mode":"tool","tool":"core.calculator","answer":str(await execute_tool_internal("core.calculator",{"expression":msg[10:]}))}
-        if low in {"time","current time","what time is it"}:
-            return {"mode":"tool","tool":"core.datetime","answer":str(await execute_tool_internal("core.datetime",{}))}
-        answer,provider=await provider_chat(msg,x.model_id)
-        if answer is not None:
-            emit("chat.completed",{"provider":provider});return {"mode":"provider","provider":provider,"answer":answer}
-    except Exception as e:emit("provider.error",{"error":str(e)})
-    # local-first useful fallback with memory context
-    mem=rows("select content from memories where content like ? order by created desc limit 5",(f"%{msg[:40]}%",))
-    context=" ".join(m["content"] for m in mem)
-    answer=f"RAYONE local core received: {msg}"
-    if context:answer+=f"\nRelevant memory: {context}"
-    emit("chat.completed",{"mode":"local"});return {"mode":"local","answer":answer}
+    from .execution_pipeline import run_pipeline
+    result=await run_pipeline(message=x.message,model_id=x.model_id,request_id=x.request_id)
+    if result.get("intent")=="tool":
+        return {"mode":"tool","tool":result.get("target","core.calculator"),"answer":str(result.get("result")),"result":result.get("result"),"request_id":result.get("request_id")}
+    return {"mode":"provider" if result.get("provider") not in {None,"local"} else "local",
+            "provider":result.get("provider"),"answer":result.get("answer") or str(result.get("result","")),
+            "request_id":result.get("request_id"),"state":result.get("state")}
 
 @app.post("/api/jobs")
 def create_job(x:JobIn,_:str=Depends(auth)):
@@ -406,14 +399,25 @@ async def worker_loop():
                 execute("update jobs set status='running',updated=? where id=?",(now(),j["id"]))
                 try:
                     inp=json.loads(j["input"] or "{}")
-                    if j["type"]=="chat":res=await chat(Chat(message=inp.get("message", "")),"system")
-                    elif j["type"]=="tool":res=await execute_tool_internal(inp["name"],inp.get("args",{}))
-                    elif j["type"]=="workflow":res=await run_workflow_internal(inp["workflow_id"],inp.get("input",{}))
-                    else:res={"error":"Unknown job type"}
-                    execute("update jobs set status='completed',result=?,updated=? where id=?",(dumps(res),now(),j["id"]));emit("job.completed",{"id":j["id"]})
-                except Exception as e:execute("update jobs set status='failed',error=?,updated=? where id=?",(str(e),now(),j["id"]));emit("job.failed",{"id":j["id"],"error":str(e)})
-            else:await asyncio.sleep(.4)
-        except Exception:await asyncio.sleep(1)
+                    from .execution_pipeline import run_pipeline
+                    if j["type"]=="chat":
+                        res=await run_pipeline(message=inp.get("message",""),model_id=inp.get("model_id"),request_id=j["id"])
+                    elif j["type"]=="tool":
+                        res=await run_pipeline(message="",kind="tool",target=inp["name"],args=inp.get("args",{}),request_id=j["id"])
+                    elif j["type"]=="workflow":
+                        res=await run_pipeline(message="",kind="workflow",target=inp["workflow_id"],args=inp.get("input",{}),request_id=j["id"])
+                    else:
+                        raise ValueError("Unknown job type")
+                    status="completed" if res.get("state")=="Complete" else "failed"
+                    execute("update jobs set status=?,result=?,error=?,updated=? where id=?",(status,dumps(res),None if status=="completed" else str(res),now(),j["id"]))
+                    emit("job.completed" if status=="completed" else "job.failed",{"id":j["id"]})
+                except Exception as e:
+                    execute("update jobs set status='failed',error=?,updated=? where id=?",(str(e),now(),j["id"]))
+                    emit("job.failed",{"id":j["id"],"error":str(e)})
+            else:
+                await asyncio.sleep(.4)
+        except Exception:
+            await asyncio.sleep(1)
 
 async def run_workflow_internal(wid, input_data):
     w=one("select * from workflows where id=? and enabled=1",(wid,));
