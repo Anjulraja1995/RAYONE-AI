@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Header, Depends, Query
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -11,6 +11,11 @@ DB = Path(os.getenv("RAYONE_DB", ROOT / "data" / "rayone.db"))
 DB.parent.mkdir(parents=True, exist_ok=True)
 APP_VERSION = "2.0.0"
 ADMIN_PASSWORD = os.getenv("RAYONE_ADMIN_PASSWORD", "RAYONE-Admin-2026")
+SESSION_TTL = max(300, min(int(os.getenv("RAYONE_SESSION_TTL", "86400")), 604800))
+LOGIN_WINDOW = max(30, int(os.getenv("RAYONE_LOGIN_WINDOW", "300")))
+LOGIN_MAX_FAILURES = max(1, int(os.getenv("RAYONE_LOGIN_MAX_FAILURES", "5")))
+LOGIN_LOCKOUT = max(10, int(os.getenv("RAYONE_LOGIN_LOCKOUT", "60")))
+_login_failures = {}
 SECRET_KEY = os.getenv("RAYONE_SECRET_KEY", "")
 if not SECRET_KEY:
     seed = os.getenv("RAYONE_SECRET_SEED", "rayone-local-first-v2")
