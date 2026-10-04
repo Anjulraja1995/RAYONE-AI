@@ -173,7 +173,10 @@ async def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
     result=None
     if x.decision=="approved" and item["action"]=="pipeline.execute":
         from .execution_pipeline import execute_approved
-        result=await execute_approved(j(item["payload"]))
+        pipeline_result=await execute_approved(j(item["payload"]))
+        # Preserve the approval API contract: expose the actual tool/workflow
+        # value as execution while retaining the full pipeline envelope.
+        result={"execution":pipeline_result.get("result"),"pipeline":pipeline_result}
     elif x.decision=="approved" and item["action"].startswith("github."):
         payload=j(item["payload"]); method=item["action"].split(".",1)[1]
         path=str(payload.get("path",""))
