@@ -6,7 +6,7 @@ from pathlib import Path
 import asyncio, base64, hashlib, json, mimetypes, os, re, time, uuid, datetime, zipfile
 from . import main as legacy
 from .local_tools import TOTAL_CAPABILITIES
-from .local_adapters import browser_fetch, extract_text, ocr_image, media_probe
+from .local_adapters import browser_fetch, browser_fetch_text, extract_text, ocr_image, media_probe
 
 router = APIRouter(prefix="/api/v2", tags=["RAYONE v2 control plane"])
 ROOT = legacy.ROOT
@@ -171,8 +171,8 @@ def classify(message):
 async def research(url_or_query):
     if re.match(r"^https?://",url_or_query):
         async with legacy.httpx.AsyncClient(timeout=20,follow_redirects=False) as c:
-            r=await c.get(url_or_query); return {"source":url_or_query,"status":r.status_code,"content":r.text[:20000]}
-    return {"query":url_or_query,"status":"search_adapter_required","results":[]}
+            result=browser_fetch_text(url_or_query, max_bytes=200000); return {"source":url_or_query,"status":result.get("status",200),"content":result.get("content","")[:20000],"text":result.get("text","")[:20000],"native":True}
+    return {"query":url_or_query,"status":"search_adapter_required","results":[],"native":True}
 
 def _conversation_turn(x, rid, answer="", provider="", append_user=True):
     cid=x.conversation_id
@@ -245,7 +245,7 @@ async def assistant_run(x):
         legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,"generic","queued",legacy.dumps(x.message),None,None,t,t))
         trace("Verifying",rid,{"media_job_id":mid})
         trace("Complete",rid)
-        msg="Media job queued; provider adapter can be attached without changing the core contract."; _conversation_turn(x,rid,msg,"media",False); _auto_memory(x.message,msg,cid)
+        msg="Native media job created; provider adapters remain optional."; _conversation_turn(x,rid,msg,"media",False); _auto_memory(x.message,msg,cid)
         return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"message":msg,"conversation_id":cid}
     trace("Executing",rid)
     answer,provider=await legacy.provider_chat(x.message,x.model_id)
