@@ -25,7 +25,7 @@ def test_capability_and_execution_smoke():
     for name,args in [
         ("local.text.upper",{"text":"rayone"}),
         ("local.math.sum",{"values":[2,3]}),
-        ("local.json.normalize",{"value":{"b":2,"a":1}}),
+        ("local.json.parse",{"text":"{\"b\":2,\"a\":1}"}),
     ]:
         r=client.post("/api/v2/tools/run",headers=h,json={"name":name,"args":args})
         assert r.status_code==200 and r.json().get("state")=="Complete", (name,r.text)
