@@ -207,7 +207,7 @@ def delete_conversation(id:str,_:str=Depends(auth)):
 def _auto_memory(message, answer, conversation_id):
     if not answer or len(str(answer)) < 8: return
     content=f"User: {message}\nAssistant: {str(answer)[:4000]}"
-    mid=str(uuid.uuid4()); t=legacy.now()
+    low=x.message.lower(); kind="video" if "video" in low else ("music" if "music" in low else ("audio" if "audio" in low else ("voice" if ("voice" in low or "tts" in low or "speech" in low) else "image"))); result=legacy.BUILTIN_PACK[kind]["generate"]({"prompt":x.message}); mid=str(uuid.uuid4()); t=legacy.now()
     legacy.execute("insert into memories values(?,?,?,?,?)",(mid,"conversation",content,legacy.dumps({"conversation_id":conversation_id,"auto":True}),t))
     legacy.execute("insert into memory_index values(?,?,?,?,?)",(str(uuid.uuid4()),mid,legacy.dumps(sorted(_tokens(content))),hashlib.sha256(content.encode()).hexdigest(),t))
 
@@ -242,11 +242,11 @@ async def assistant_run(x):
     if intent=="media":
         trace("Executing",rid,{"media":True})
         mid=str(uuid.uuid4()); t=legacy.now()
-        legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,"generic","queued",legacy.dumps(x.message),None,None,t,t))
+        legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,kind,"completed",legacy.dumps({"prompt":x.message}),legacy.dumps(result),"native",t,t))
         trace("Verifying",rid,{"media_job_id":mid})
         trace("Complete",rid)
-        msg="Native media job created; provider adapters remain optional."; _conversation_turn(x,rid,msg,"media",False); _auto_memory(x.message,msg,cid)
-        return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"message":msg,"conversation_id":cid}
+        msg=f"Native {kind} artifact generated."; _conversation_turn(x,rid,msg,"media",False); _auto_memory(x.message,msg,cid)
+        return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"status":"completed","provider":"native","result":result,"message":msg,"conversation_id":cid}
     trace("Executing",rid)
     answer,provider=await legacy.provider_chat(x.message,x.model_id)
     if answer is None:
