@@ -164,7 +164,7 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             context=list(reversed(rows or []))
         except Exception:
             context=[]
-    from .local_brain import build_plan, calculator_expression, resolve_followup, is_capability_question
+    from .local_brain import build_plan, calculator_expression, resolve_followup, is_capability_question, infer_local_tool
     state=_conversation_state(conversation_id)
     pending={"intent":state.get("pending_intent"),"kind":state.get("pending_kind"),"message":state.get("pending_message")} if state.get("pending_intent") else None
     if is_capability_question(message) and not kind:
@@ -197,6 +197,10 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
         _trace(request_id,"Complete",{"status_for":rid})
         return out
     effective_message=resolved.get("message") or message
+    inferred=infer_local_tool(effective_message) if intent=="chat" else None
+    if inferred:
+        target,args=inferred
+        intent="tool"
     if resolved.get("execute_pending")=="true":
         _save_conversation_state(conversation_id,pending_intent=None,pending_kind=None,pending_message=None,
                                  last_request_id=request_id,last_state="Executing",last_result=None)
