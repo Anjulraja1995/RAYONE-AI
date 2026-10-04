@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request
+from fastapi import FastAPI, HTTPException, Header, Depends, Query, Request, Request
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from pathlib import Path
@@ -11,6 +11,11 @@ DB = Path(os.getenv("RAYONE_DB", ROOT / "data" / "rayone.db"))
 DB.parent.mkdir(parents=True, exist_ok=True)
 APP_VERSION = "2.0.0"
 ADMIN_PASSWORD = os.getenv("RAYONE_ADMIN_PASSWORD", "RAYONE-Admin-2026")
+SESSION_TTL = max(300, min(int(os.getenv("RAYONE_SESSION_TTL", "86400")), 604800))
+LOGIN_WINDOW = max(30, int(os.getenv("RAYONE_LOGIN_WINDOW", "300")))
+LOGIN_MAX_FAILURES = max(1, int(os.getenv("RAYONE_LOGIN_MAX_FAILURES", "5")))
+LOGIN_LOCKOUT = max(10, int(os.getenv("RAYONE_LOGIN_LOCKOUT", "60")))
+_login_failures = {}
 SESSION_TTL = max(300, min(int(os.getenv("RAYONE_SESSION_TTL", "86400")), 604800))
 LOGIN_WINDOW = max(30, int(os.getenv("RAYONE_LOGIN_WINDOW", "300")))
 LOGIN_MAX_FAILURES = max(1, int(os.getenv("RAYONE_LOGIN_MAX_FAILURES", "5")))
@@ -109,34 +114,86 @@ class ProjectIn(BaseModel): name: str; type: str = "app"; config: dict = {}
 class SecretIn(BaseModel): name: str; value: str
 class SettingIn(BaseModel): value: str
 
+def _login_key(request: Request) -> str:
+    host = request.client.host if request.client else "local"
+    return hashlib.sha256(host.encode()).hexdigest()[:24]
+
+def _login_locked(key: str) -> bool:
+    item = _login_failures.get(key)
+    if not item: return False
+    if now() >= item["lock_until"]:
+        _login_failures.pop(key, None)
+        return False
+    return True
+
+def _record_login_failure(key: str):
+    t = now()
+    item = _login_failures.get(key)
+    if not item or t - item["window_start"] > LOGIN_WINDOW:
+        item = {"window_start": t, "failures": 0, "lock_until": 0}
+    item["failures"] += 1
+    if item["failures"] >= LOGIN_MAX_FAILURES:
+        item["lock_until"] = t + LOGIN_LOCKOUT
+    _login_failures[key] = item
+
+def _clear_login_failures(key: str):
+    _login_failures.pop(key, None)
+
 @app.post("/api/auth/login")
-def login(x: LoginIn):
+def login(x: LoginIn, request: Request):
+    key = _login_key(request)
+    if _login_locked(key):
+        audit("login_blocked", "auth", {})
+        raise HTTPException(429, "Too many failed login attempts; try again later")
+    execute("delete from sessions where expires<=?", (now(),))
     override = one("SELECT value FROM settings WHERE key=?", ("admin_password_hash",))
     valid = verify_password(x.password, override["value"]) if override else secrets.compare_digest(x.password, ADMIN_PASSWORD)
     if not valid:
+        _record_login_failure(key)
         audit("login_failed", "auth", {})
         raise HTTPException(401, "Invalid credentials")
-    token = secrets.token_urlsafe(32); execute("INSERT INTO sessions VALUES(?,?,?)", (token, now(), now()+86400))
-    audit("login", "auth", {})
-    return {"token": token, "expires_in": 86400}
+    _clear_login_failures(key)
+    token = secrets.token_urlsafe(32)
+    expires = now() + SESSION_TTL
+    execute("INSERT INTO sessions VALUES(?,?,?)", (token, now(), expires))
+    audit("login", "auth", {"expires": expires})
+    return {"token": token, "expires_in": SESSION_TTL, "expires_at": expires}
 
 @app.post("/api/auth/logout")
 def logout(authorization: str|None = Header(default=None)):
-    token = authorization.replace("Bearer ", "", 1) if authorization else ""
-    if token: execute("DELETE FROM sessions WHERE token=?", (token,))
+    token = authorization[7:].strip() if authorization and authorization.startswith("Bearer ") else ""
+    if token:
+        execute("DELETE FROM sessions WHERE token=?", (token,))
+        audit("logout", "auth", {})
     return {"ok": True}
 
 def auth(authorization: str|None = Header(default=None)):
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Authentication required")
-    token = authorization[7:]
+    token = authorization[7:].strip()
+    if not token or len(token) > 256:
+        raise HTTPException(401, "Invalid session token")
     s = one("SELECT * FROM sessions WHERE token=? AND expires>?", (token, now()))
-    if not s: raise HTTPException(401, "Session expired or invalid")
+    if not s:
+        execute("delete from sessions where token=?", (token,))
+        raise HTTPException(401, "Session expired or invalid")
     return token
+
+@app.get("/api/auth/session")
+def session_info(token: str = Depends(auth)):
+    s = one("select created,expires from sessions where token=?", (token,))
+    if not s: raise HTTPException(401, "Session expired or invalid")
+    return {"authenticated": True, "created_at": s["created"], "expires_at": s["expires"], "expires_in": max(0, int(s["expires"] - now()))}
 
 @app.get("/api/health")
 def health():
-    return {"ok": True, "name": "RAYONE AI", "version": APP_VERSION, "database": "sqlite", "mode": "free-local-first", "authenticated_admin": True}
+    try:
+        db_ok = bool(one("select 1 as ok"))
+        db_integrity = one("pragma integrity_check")["integrity_check"] == "ok"
+    except Exception:
+        db_ok = False
+        db_integrity = False
+    return {"ok": db_ok and db_integrity, "name": "RAYONE AI", "version": APP_VERSION, "database": "sqlite", "database_integrity": db_integrity, "mode": "free-local-first", "authenticated_admin": True}
 
 @app.get("/api/summary")
 def summary(_: str = Depends(auth)):
