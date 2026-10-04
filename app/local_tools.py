@@ -1265,6 +1265,8 @@ def execute_local(family, op, a):
         if op=="escape": return html.escape(text)
         if op=="unescape": return html.unescape(text)
         if op in ("strip_tags","text_content","to_plaintext"): return re.sub(r"<[^>]+>","",text)
+    if family=="security" and op in ("safe_filename","safe_name","safe_slug"):
+        return re.sub(r"[^A-Za-z0-9._-]+","_",text).strip("._")
     if family=="colors":
         if op=="hex_to_rgb":
             h=text.strip().lstrip("#"); h=h if len(h)==6 else "".join(ch*2 for ch in h); return [int(h[i:i+2],16) for i in (0,2,4)]
