@@ -1,121 +1,57 @@
-"""RAYONE native creative engine.
-
-Zero-cost, dependency-light creative primitives. These are real local generators,
-not provider placeholders. They create inspectable artifacts directly under the
-RAYONE workspace and return their metadata for the shared tool executor.
-"""
+"""Enhanced zero-cost creative primitives for RAYONE AI."""
+from __future__ import annotations
 from pathlib import Path
-import hashlib
-import html
-import math
-import re
-import struct
-import time
-import uuid
-import wave
-
-ROOT = Path(__file__).resolve().parent.parent
-OUT = ROOT / "data" / "workspace" / "native"
-OUT.mkdir(parents=True, exist_ok=True)
-
-def _slug(value: str) -> str:
-    s = re.sub(r"[^a-zA-Z0-9]+", "-", str(value).strip()).strip("-").lower()
-    return s[:48] or "rayone"
-
-def _file(kind: str, ext: str, prompt: str) -> Path:
-    stamp = time.strftime("%Y%m%d-%H%M%S")
-    digest = hashlib.sha256(str(prompt).encode("utf-8")).hexdigest()[:8]
-    return OUT / f"{stamp}-{_slug(kind)}-{digest}-{uuid.uuid4().hex[:6]}.{ext}"
-
-def _svg_text(prompt: str, width: int = 1280, height: int = 720, title: str = "RAYONE AI") -> str:
-    safe = html.escape(str(prompt))
-    # Keep long prompts readable without requiring a font/rendering dependency.
-    words = safe.split()
-    lines, line = [], ""
+import hashlib, html, math, re, struct, time, uuid, wave, shutil
+ROOT=Path(__file__).resolve().parent.parent
+OUT=ROOT/"data"/"workspace"/"native"; OUT.mkdir(parents=True,exist_ok=True)
+def _slug(v):
+    s=re.sub(r"[^a-zA-Z0-9]+","-",str(v).strip()).strip("-").lower(); return s[:48] or "rayone"
+def _file(kind,ext,prompt):
+    return OUT/f"{time.strftime('%Y%m%d-%H%M%S')}-{_slug(kind)}-{hashlib.sha256(str(prompt).encode()).hexdigest()[:10]}-{uuid.uuid4().hex[:6]}.{ext}"
+def _dims(args,kind):
+    ratio=str(args.get("aspect_ratio","16:9"))
+    p={"square":(1080,1080),"portrait":(1080,1350),"story":(1080,1920),"reel":(1080,1920),"shorts":(1080,1920),"landscape":(1920,1080),"wide":(1920,1080),"16:9":(1920,1080),"9:16":(1080,1920),"1:1":(1080,1080),"4:5":(1080,1350)}
+    if ratio in p:return p[ratio]
+    try:a,b=(float(x) for x in ratio.split(":",1));w=1080;return w,max(1,int(w*b/a))
+    except Exception:return (1920,1080) if kind in {"image","video"} else (1080,1080)
+def _wrap(text,max_chars=42,max_lines=9):
+    words=html.escape(str(text)).split();lines=[];line=""
     for word in words:
-        if len(line) + len(word) + 1 > 46:
-            lines.append(line)
-            line = word
-        else:
-            line = (line + " " + word).strip()
-    if line:
-        lines.append(line)
-    lines = lines[:7] or ["RAYONE native creative output"]
-    tspans = "".join(f'<tspan x="80" dy="{58 if i else 0}">{x}</tspan>' for i, x in enumerate(lines))
-    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#08151d"/><stop offset=".55" stop-color="#153847"/><stop offset="1" stop-color="#071016"/></linearGradient></defs>
-<rect width="100%" height="100%" fill="url(#g)"/>
-<circle cx="{width-140}" cy="120" r="190" fill="#8fe0b3" opacity=".10"/>
-<circle cx="{width-240}" cy="{height-40}" r="260" fill="#7cc9ff" opacity=".07"/>
-<rect x="42" y="42" width="{width-84}" height="{height-84}" rx="28" fill="none" stroke="#8fe0b3" opacity=".32"/>
-<text x="80" y="110" fill="#8fe0b3" font-family="system-ui,sans-serif" font-size="30" font-weight="800" letter-spacing="4">{html.escape(title)}</text>
-<text x="80" y="205" fill="#e8f1f5" font-family="system-ui,sans-serif" font-size="48" font-weight="700">{tspans}</text>
-<text x="80" y="{height-70}" fill="#8ea3ad" font-family="system-ui,sans-serif" font-size="18">Native local creative engine · no paid provider</text>
-</svg>'''
-
-def _write_wav(path: Path, notes, seconds_per_note=0.24, sample_rate=22050):
-    frames = bytearray()
-    amp = 11000
+        if len(line)+len(word)+1>max_chars:
+            if line:lines.append(line)
+            line=word
+        else:line=(line+" "+word).strip()
+    if line:lines.append(line)
+    return lines[:max_lines] or ["RAYONE AI"]
+def _svg(prompt,w,h,title,animated=False):
+    lines=_wrap(prompt,50 if w>=1600 else 38);body=[];y=int(h*.32)
+    for i,line in enumerate(lines):body.append(f'<text x="{int(w*.08)}" y="{y+i*int(h*.065)}" fill="#eef7f2" font-family="system-ui,sans-serif" font-size="{max(30,int(w*.045))}" font-weight="700">{line}</text>')
+    anim=f'<style>@keyframes rayonePulse{{0%,100%{{opacity:.2}}50%{{opacity:.9}}}}</style><circle cx="{w-160}" cy="160" r="70" fill="#8fe0b3" style="animation:rayonePulse 2.4s ease-in-out infinite"/>' if animated else ""
+    return f'''<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {w} {h}">
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#07131a"/><stop offset=".55" stop-color="#143b42"/><stop offset="1" stop-color="#05090c"/></linearGradient><radialGradient id="glow"><stop stop-color="#8fe0b3" stop-opacity=".30"/><stop offset="1" stop-color="#8fe0b3" stop-opacity="0"/></radialGradient></defs>
+<rect width="100%" height="100%" fill="url(#bg)"/><circle cx="{int(w*.82)}" cy="{int(h*.22)}" r="{int(min(w,h)*.30)}" fill="url(#glow)"/><rect x="{int(w*.035)}" y="{int(h*.035)}" width="{int(w*.93)}" height="{int(h*.93)}" rx="{int(min(w,h)*.025)}" fill="none" stroke="#8fe0b3" stroke-opacity=".28" stroke-width="2"/>
+<text x="{int(w*.08)}" y="{int(h*.16)}" fill="#8fe0b3" font-family="system-ui,sans-serif" font-size="{max(22,int(w*.022))}" font-weight="800" letter-spacing="5">{html.escape(title)}</text>{''.join(body)}
+<text x="{int(w*.08)}" y="{int(h*.92)}" fill="#91a6ad" font-family="system-ui,sans-serif" font-size="{max(14,int(w*.014))}">RAYONE AI · native zero-cost renderer</text>{anim}</svg>'''
+def _wav(path,notes,seconds=.22,rate=44100):
+    frames=bytearray()
     for freq in notes:
-        n = max(1, int(sample_rate * seconds_per_note))
+        n=max(1,int(rate*seconds))
         for i in range(n):
-            t = i / sample_rate
-            envelope = min(1.0, i / max(1, sample_rate * .02), (n-i) / max(1, sample_rate * .04))
-            sample = int(amp * envelope * math.sin(2 * math.pi * float(freq) * t))
-            frames.extend(struct.pack("<h", sample))
-    with wave.open(str(path), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(sample_rate)
-        w.writeframes(frames)
-
-def _result(path: Path, kind: str, prompt: str, mime: str):
-    return {"ok": True, "engine": "rayone-native", "kind": kind, "prompt": str(prompt),
-            "path": str(path.relative_to(ROOT)), "file": str(path.name), "mime": mime,
-            "size": path.stat().st_size, "native": True}
-
+            t=i/rate;env=min(1,i/(rate*.02),(n-i)/(rate*.04));frames.extend(struct.pack("<h",int(9000*env*math.sin(2*math.pi*float(freq)*t))))
+    with wave.open(str(path),"wb") as w:w.setnchannels(1);w.setsampwidth(2);w.setframerate(rate);w.writeframes(frames)
+def _result(path,kind,prompt,mime,**extra):
+    return {"ok":True,"engine":"rayone-native-enhanced","kind":kind,"prompt":str(prompt),"path":str(path.relative_to(ROOT)),"file":path.name,"mime":mime,"size":path.stat().st_size,"native":True,"quality":"pipeline-ready",**extra}
 def generate_image(args):
-    prompt = args.get("prompt", args.get("text", "RAYONE AI native image"))
-    path = _file("image", "svg", prompt)
-    path.write_text(_svg_text(prompt), encoding="utf-8")
-    return _result(path, "image", prompt, "image/svg+xml")
-
+    p=args.get("prompt",args.get("text","RAYONE AI image"));w,h=_dims(args,"image");path=_file("image","svg",p);path.write_text(_svg(p,w,h,"RAYONE IMAGE"),encoding="utf-8");return _result(path,"image",p,"image/svg+xml",width=w,height=h)
 def generate_design(args):
-    prompt = args.get("prompt", args.get("text", "RAYONE AI native design"))
-    path = _file("design", "svg", prompt)
-    path.write_text(_svg_text(prompt, 1440, 900, "RAYONE DESIGN"), encoding="utf-8")
-    return _result(path, "design", prompt, "image/svg+xml")
-
+    p=args.get("prompt",args.get("text","RAYONE AI design"));w,h=_dims(args,"design");path=_file("design","svg",p);path.write_text(_svg(p,w,h,"RAYONE DESIGN"),encoding="utf-8");return _result(path,"design",p,"image/svg+xml",width=w,height=h)
 def generate_audio(args):
-    prompt = args.get("prompt", args.get("text", "RAYONE audio"))
-    path = _file("audio", "wav", prompt)
-    _write_wav(path, [220, 277.18, 329.63, 440], .28)
-    return _result(path, "audio", prompt, "audio/wav")
-
+    p=args.get("prompt",args.get("text","RAYONE audio"));path=_file("audio","wav",p);_wav(path,[220,277.18,329.63,440],.28);return _result(path,"audio",p,"audio/wav",sample_rate=44100)
 def generate_music(args):
-    prompt = args.get("prompt", args.get("text", "RAYONE music"))
-    path = _file("music", "wav", prompt)
-    _write_wav(path, [261.63, 329.63, 392.0, 523.25, 392.0, 329.63, 293.66, 261.63], .22)
-    return _result(path, "music", prompt, "audio/wav")
-
+    p=args.get("prompt",args.get("text","RAYONE music"));path=_file("music","wav",p);_wav(path,[261.63,293.66,329.63,392,440,523.25,659.25,523.25,440,392,329.63,293.66],.20);return _result(path,"music",p,"audio/wav",sample_rate=44100)
 def generate_voice(args):
-    prompt = args.get("prompt", args.get("text", "RAYONE voice"))
-    # Native baseline voice: deterministic speech-like carrier. It is intentionally
-    # exposed as a real audio artifact, while higher-quality phoneme engines can be
-    # added later without changing the tool contract.
-    path = _file("voice", "wav", prompt)
-    words = max(1, len(str(prompt).split()))
-    notes = [180 + (i % 5) * 35 for i in range(min(words * 2, 32))]
-    _write_wav(path, notes, .11)
-    return _result(path, "voice", prompt, "audio/wav")
-
+    p=args.get("prompt",args.get("text","RAYONE voice"));path=_file("voice","wav",p);_wav(path,[175+(i%7)*27 for i in range(min(max(4,len(str(p).split())*2),40))],.10);return _result(path,"voice",p,"audio/wav",sample_rate=44100,tts_engine="native-carrier")
 def generate_video(args):
-    prompt = args.get("prompt", args.get("text", "RAYONE native animation"))
-    path = _file("video", "svg", prompt)
-    svg = _svg_text(prompt, 1280, 720, "RAYONE VIDEO")
-    svg = svg.replace("</svg>", '<style>@keyframes rayonePulse{0%,100%{opacity:.25}50%{opacity:.85}}</style><circle cx="1080" cy="170" r="70" fill="#8fe0b3" style="animation:rayonePulse 2s ease-in-out infinite"/></svg>')
-    path.write_text(svg, encoding="utf-8")
-    result = _result(path, "video", prompt, "image/svg+xml")
-    result["animation"] = True
-    result["format"] = "animated-svg"
-    return result
+    p=args.get("prompt",args.get("text","RAYONE video"));w,h=_dims(args,"video");path=_file("video","svg",p);path.write_text(_svg(p,w,h,"RAYONE VIDEO",True),encoding="utf-8");return _result(path,"video",p,"image/svg+xml",width=w,height=h,animation=True,format="animated-svg")
+def engine_info():
+    return {"engine":"rayone-native-enhanced","local":True,"paid_dependency":False,"ffmpeg_available":bool(shutil.which("ffmpeg")),"capabilities":["image","design","audio","music","voice","video"],"quality_note":"Deterministic local rendering; learned generative models remain optional adapters."}
