@@ -823,6 +823,15 @@ async def provider_health(_:str=Depends(auth)):
         url=(p["base_url"] or "").rstrip("/")
         item={"id":p["id"],"name":p["name"],"base_url":url,"ok":False}
         if url:
+            try:
+                async with legacy.httpx.AsyncClient(timeout=5) as c:
+                    rr=await c.get(url)
+                    item["ok"]=rr.status_code < 500
+                    item["status"]=rr.status_code
+            except Exception as ex:
+                item["error"]=str(ex)
+        out.append(item)
+    return {"providers":out}
 
 # Unified execution control endpoints
 @router.get("/execution/{request_id}")
