@@ -6,6 +6,7 @@ from pathlib import Path
 import asyncio, base64, hashlib, json, mimetypes, os, re, time, uuid, datetime, zipfile
 from . import main as legacy
 from .local_tools import TOTAL_CAPABILITIES
+from .local_adapters import browser_fetch, extract_text, ocr_image, media_probe
 
 router = APIRouter(prefix="/api/v2", tags=["RAYONE v2 control plane"])
 ROOT = legacy.ROOT
@@ -500,6 +501,32 @@ def index_file(id:str,_:str=Depends(auth)):
     legacy.execute("insert into memories values(?,?,?,?,?)",(memory_id,"file:"+id,text[:100000],legacy.dumps({"file_id":id,"name":x["name"]}),t))
     legacy.execute("insert or replace into memory_index values(?,?,?,?,?)",(str(uuid.uuid4()),memory_id,legacy.dumps(list(_tokens(text))),hashlib.sha256(text.encode()).hexdigest(),t))
     return {"ok":True,"memory_id":memory_id,"characters":len(text)}
+
+@router.post("/local/browser/fetch")
+def local_browser_fetch(payload:dict,_:str=Depends(auth)):
+    url=str(payload.get("url","")).strip()
+    if not url: raise HTTPException(400,"url is required")
+    try:
+        r=browser_fetch(url,int(payload.get("max_bytes",200000)))
+        r["text"]=extract_text(r["content"]) if "html" in r["content_type"].lower() else r["content"]
+        return r
+    except Exception as e: raise HTTPException(400,"Browser fetch failed: "+str(e))
+
+@router.post("/local/ocr")
+def local_ocr(payload:dict,_:str=Depends(auth)):
+    file_id=str(payload.get("file_id",""))
+    row=legacy.one("select path from workspace_files where id=?",(file_id,))
+    if not row: raise HTTPException(404,"File not found")
+    result=ocr_image(row["path"])
+    if not result.get("available",True): raise HTTPException(503,result.get("reason","OCR engine unavailable"))
+    return result
+
+@router.post("/local/media/probe")
+def local_media_probe(payload:dict,_:str=Depends(auth)):
+    file_id=str(payload.get("file_id",""))
+    row=legacy.one("select path from workspace_files where id=?",(file_id,))
+    if not row: raise HTTPException(404,"File not found")
+    return media_probe(row["path"])
 
 @router.get("/research/search")
 async def web_search(q:str,limit:int=5,_:str=Depends(auth)):
