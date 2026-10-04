@@ -383,10 +383,22 @@ def delete_file(id:str,_:str=Depends(auth)):
 def media(_:str=Depends(auth)): return legacy.rows("select * from media_jobs order by created desc")
 
 @router.post("/media")
-def create_media(x:MediaIn,_:str=Depends(auth)):
+async def create_media(x:MediaIn,_:str=Depends(auth)):
     i=str(uuid.uuid4());t=legacy.now()
     legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(i,x.kind,"queued",legacy.dumps(x.input),None,x.provider,t,t))
-    legacy.emit("media.queued",{"id":i,"kind":x.kind}); return {"id":i,"status":"queued"}
+    # Native-first execution: media creation is immediately executable without a provider.
+    native_kinds={"image","design","audio","music","voice","video"}
+    if x.kind in native_kinds and (not x.provider or x.provider=="native"):
+        try:
+            result=await legacy.execute_tool_internal(f"local.{x.kind}.generate",x.input)
+            legacy.execute("update media_jobs set status=?,output=?,provider=?,updated=? where id=?",("completed",legacy.dumps(result),"native",legacy.now(),i))
+            legacy.emit("media.completed",{"id":i,"kind":x.kind,"native":True})
+            return {"id":i,"status":"completed","provider":"native","result":result}
+        except Exception as e:
+            legacy.execute("update media_jobs set status=?,output=?,provider=?,updated=? where id=?",("failed",legacy.dumps({"error":str(e)}),"native",legacy.now(),i))
+            legacy.emit("media.failed",{"id":i,"kind":x.kind,"error":str(e)})
+            raise HTTPException(500,"Native media generation failed: "+str(e))
+    legacy.emit("media.queued",{"id":i,"kind":x.kind}); return {"id":i,"status":"queued","provider":x.provider or "external-adapter"}
 
 @router.get("/connectors")
 def connectors(_:str=Depends(auth)):
