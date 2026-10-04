@@ -33,7 +33,9 @@ def init_advanced():
 
 init_advanced()
 
-def auth(token=Depends(legacy.auth)): return token
+def auth(token=Depends(legacy.auth)):
+    legacy.execute("delete from sessions where expires<=?",(legacy.now(),))
+    return token
 def j(x): return json.loads(x or "{}") if isinstance(x,str) else (x or {})
 def audit(action,target,detail): legacy.audit(action,target,detail)
 
@@ -804,6 +806,10 @@ def backup_create(_:str=Depends(auth)):
         if STORE.exists():
             for p in STORE.rglob("*"):
                 if p.is_file():z.write(p,arcname=str(Path("workspace")/p.relative_to(STORE)))
+    backups=sorted((ROOT/"data").glob("rayone-backup-*.zip"),key=lambda x:x.stat().st_mtime,reverse=True)
+    for old in backups[10:]:
+        try: old.unlink()
+        except OSError: pass
     audit("backup.create","backup",{"file":str(target.name)})
     return {"ok":True,"file":target.name,"path":str(target.relative_to(ROOT))}
 
@@ -866,3 +872,31 @@ async def execute_approved_external(id:str,_:str=Depends(auth)):
             r=await client.request(method,url,headers=headers,json=payload.get("json"))
             return {"ok":r.status_code<400,"status":r.status_code,"data":r.json() if "application/json" in r.headers.get("content-type","") else r.text[:20000]}
     raise HTTPException(400,"This approval type is already executed by the decision endpoint or unsupported")
+
+
+@router.post("/backup/import")
+def backup_import(payload:dict,_:str=Depends(auth)):
+    tables=payload.get("tables")
+    if not isinstance(tables,dict): raise HTTPException(400,"Expected {tables:{...}} backup export")
+    allowed=["projects","providers","models","tools","agents","workflows","memories","settings","traces","approvals","permissions","schedules","workspace_files","media_jobs","connectors","metrics_v2","memory_index","conversations","messages"]
+    c=legacy.conn()
+    imported=0
+    try:
+        for t in allowed:
+            data=tables.get(t)
+            if not isinstance(data,list) or not data: continue
+            # Only columns already present in the live schema are accepted.
+            cols=[r[1] for r in c.execute("pragma table_info("+t+")").fetchall()]
+            if not cols: continue
+            for row in data:
+                safe={k:v for k,v in row.items() if k in cols}
+                if not safe: continue
+                names=list(safe); q=",".join("?" for _ in names)
+                c.execute("insert or replace into "+t+" ("+",".join(names)+") values ("+q+")",[safe[k] for k in names])
+                imported+=1
+        c.commit()
+    except Exception as e:
+        c.rollback(); raise HTTPException(400,"Backup import failed: "+str(e))
+    finally: c.close()
+    audit("backup.import","backup",{"rows":imported})
+    return {"ok":True,"rows_imported":imported}
