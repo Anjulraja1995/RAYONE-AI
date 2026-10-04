@@ -929,7 +929,7 @@ def validate_workflow(payload:dict,_:str=Depends(auth)):
 def capabilities(_:str=Depends(auth)):
     return {
       "core":["auth","projects","providers","models","tools","agents","workflows","memory","jobs","events","audit","checkpoint","import_export"],
-      "v2":["state_machine","streaming","approvals","permissions","research","document_extraction","semantic_memory","scheduler","media_contract","connectors","github","gitlab","backups","provider_failover","observability"],
+      "v2":["state_machine","streaming","approvals","permissions","research","document_extraction","semantic_memory","scheduler","media_contract","connectors","github","gitlab","backups","provider_failover","observability","local_tool_pack","workflow_validation","vorqyon_execution_verification"],
       "optional":["native_android","native_desktop","ocr","browser_automation","real_media_generation","messaging_connectors"],
       "policy":"Optional capabilities activate only when their adapter/dependency/credential is configured; unavailable integrations are never faked."
     }
