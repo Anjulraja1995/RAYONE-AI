@@ -77,3 +77,24 @@ def test_natural_language_routes_to_local_capabilities():
     assert a.json().get("result") is not None
     b=client.post("/api/v2/assistant/chat",headers=h,json={"message":"Translate hello to Hindi","request_id":"natural-translation"})
     assert b.status_code==200 and b.json().get("intent")=="tool"
+
+
+def test_natural_arithmetic_without_command_word():
+    h=login()
+    r=client.post("/api/v2/assistant/chat",headers=h,json={"message":"What is 125 * 48?","request_id":"natural-arithmetic"})
+    assert r.status_code==200 and r.json().get("intent")=="tool"
+    assert r.json().get("result")==6000
+
+
+def test_explicit_compound_request_executes_each_step():
+    h=login()
+    r=client.post("/api/v2/assistant/chat",headers=h,json={
+        "message":"Calculate 10 + 5 then calculate 20 * 3","request_id":"compound-execution"
+    })
+    assert r.status_code==200, r.text
+    d=r.json()
+    assert d.get("state")=="Complete" and d.get("intent")=="workflow"
+    steps=d.get("result",{}).get("steps",[])
+    assert len(steps)==2
+    assert steps[0].get("result")==15
+    assert steps[1].get("result")==60
