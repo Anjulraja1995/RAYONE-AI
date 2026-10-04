@@ -1239,9 +1239,7 @@ def execute_local(family, op, a):
     if family=="advanced_native":
         from .native_engines import native_search, research as native_research, _document_extract, _csv_analyze, code_analyze, workflow_plan, _safe_workspace_path
         if op=="workspace_search": return native_search(a.get("query",a.get("value","")),a.get("limit",10))
-        if op=="research":
-            import asyncio
-            return asyncio.run(native_research(a.get("query",a.get("value","")),a.get("max_sources",5)))
+        if op=="research": return native_research(a.get("query",a.get("value","")),a.get("max_sources",5))
         if op=="document": return _document_extract(a.get("path",a.get("value","")))
         if op=="csv_analyze": return _csv_analyze(str(a.get("text",a.get("value",""))))
         if op=="code_analyze": return code_analyze(a.get("source",a.get("value","")),a.get("language","python"))
