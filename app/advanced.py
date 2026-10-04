@@ -51,6 +51,7 @@ class AssistantIn(BaseModel):
     project_id: str|None=None
     model_id: str|None=None
     require_approval: bool=False
+    conversation_id: str|None=None
 
 class ApprovalIn(BaseModel):
     decision: str
@@ -152,8 +153,45 @@ async def research(url_or_query):
             r=await c.get(url_or_query); return {"source":url_or_query,"status":r.status_code,"content":r.text[:20000]}
     return {"query":url_or_query,"status":"search_adapter_required","results":[]}
 
+def _conversation_turn(x, rid, answer="", provider=""):
+    cid=x.conversation_id
+    if cid and not legacy.one("select id from conversations where id=?",(cid,)): cid=None
+    if not cid:
+        cid=str(uuid.uuid4()); t=legacy.now()
+        title=x.message.strip().replace("\n"," ")[:80] or "RAYONE Conversation"
+        legacy.execute("insert into conversations values(?,?,?,?,?)",(cid,x.project_id,title,t,t))
+    legacy.execute("insert into messages values(?,?,?,?,?,?,?)",(str(uuid.uuid4()),cid,"user",x.message,"Understanding",None,legacy.now()))
+    if answer:
+        legacy.execute("insert into messages values(?,?,?,?,?,?,?)",(str(uuid.uuid4()),cid,"assistant",str(answer),"Complete",provider,legacy.now()))
+    legacy.execute("update conversations set updated=? where id=?",(legacy.now(),cid))
+    return cid
+
+@router.get("/conversations")
+def conversations(_:str=Depends(auth)):
+    return legacy.rows("select * from conversations order by updated desc limit 200")
+
+@router.get("/conversations/{id}/messages")
+def conversation_messages(id:str,_:str=Depends(auth)):
+    if not legacy.one("select id from conversations where id=?",(id,)): raise HTTPException(404,"Conversation not found")
+    return legacy.rows("select * from messages where conversation_id=? order by created",(id,))
+
+@router.delete("/conversations/{id}")
+def delete_conversation(id:str,_:str=Depends(auth)):
+    legacy.execute("delete from messages where conversation_id=?",(id,))
+    legacy.execute("delete from conversations where id=?",(id,))
+    audit("conversation.delete","conversation",{"id":id})
+    return {"ok":True}
+
+def _auto_memory(message, answer, conversation_id):
+    if not answer or len(str(answer)) < 8: return
+    content=f"User: {message}\nAssistant: {str(answer)[:4000]}"
+    mid=str(uuid.uuid4()); t=legacy.now()
+    legacy.execute("insert into memories values(?,?,?,?,?)",(mid,"conversation",content,legacy.dumps({"conversation_id":conversation_id,"auto":True}),t))
+    legacy.execute("insert into memory_index values(?,?,?,?,?)",(str(uuid.uuid4()),mid,legacy.dumps(sorted(_tokens(content))),hashlib.sha256(content.encode()).hexdigest(),t))
+
 async def assistant_run(x):
     rid=str(uuid.uuid4()); metric("assistant.requests")
+    cid=_conversation_turn(x,rid)
     trace("Idle",rid)
     trace("Understanding",rid,{"message":x.message})
     intent=classify(x.message)
@@ -169,20 +207,23 @@ async def assistant_run(x):
         result=await legacy.execute_tool_internal("core.calculator",{"expression":expr})
         trace("Verifying",rid,{"result":result})
         trace("Complete",rid)
-        return {"request_id":rid,"state":"Complete","intent":intent,"result":result}
+        _conversation_turn(x,rid,result,"local"); _auto_memory(x.message,str(result),cid)
+        return {"request_id":rid,"state":"Complete","intent":intent,"result":result,"conversation_id":cid}
     if intent=="research":
         trace("Researching",rid)
         result=await research(x.message.strip())
         trace("Verifying",rid,{"sources":1 if result.get("source") else 0})
         trace("Complete",rid)
-        return {"request_id":rid,"state":"Complete","intent":intent,"result":result}
+        _conversation_turn(x,rid,result.get("answer") if isinstance(result,dict) else str(result),"research"); _auto_memory(x.message,str(result),cid)
+        return {"request_id":rid,"state":"Complete","intent":intent,"result":result,"conversation_id":cid}
     if intent=="media":
         trace("Executing",rid,{"media":True})
         mid=str(uuid.uuid4()); t=legacy.now()
         legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,"generic","queued",legacy.dumps(x.message),None,None,t,t))
         trace("Verifying",rid,{"media_job_id":mid})
         trace("Complete",rid)
-        return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"message":"Media job queued; provider adapter can be attached without changing the core contract."}
+        msg="Media job queued; provider adapter can be attached without changing the core contract."; _conversation_turn(x,rid,msg,"media"); _auto_memory(x.message,msg,cid)
+        return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"message":msg,"conversation_id":cid}
     trace("Executing",rid)
     answer,provider=await legacy.provider_chat(x.message,x.model_id)
     if answer is None:
@@ -193,7 +234,8 @@ async def assistant_run(x):
     trace("Verifying",rid,{"provider":provider})
     trace("Complete",rid)
     metric("assistant.completed")
-    return {"request_id":rid,"state":"Complete","intent":intent,"provider":provider,"answer":answer}
+    _conversation_turn(x,rid,answer,provider); _auto_memory(x.message,answer,cid)
+    return {"request_id":rid,"state":"Complete","intent":intent,"provider":provider,"answer":answer,"conversation_id":cid}
 
 @router.post("/assistant/chat")
 async def assistant_chat(x:AssistantIn,_:str=Depends(auth)):
