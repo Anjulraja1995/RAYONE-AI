@@ -1,0 +1,24 @@
+services:
+  rayone:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: rayone-ai:latest
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      RAYONE_DB: /app/data/rayone.db
+    volumes:
+      - rayone-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD","python","-c","import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=4).read()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  rayone-data:
