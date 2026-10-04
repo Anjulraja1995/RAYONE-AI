@@ -90,3 +90,16 @@ def test_password_hash_roundtrip():
     assert encoded.startswith("scrypt$")
     assert verify_password("A-strong-test-password-2026",encoded)
     assert not verify_password("wrong-password",encoded)
+
+
+def test_local_tool_pack():
+    t=token(); hh=h(t)
+    r=client.get('/api/v2/tools/catalog',headers=hh)
+    assert r.status_code==200 and r.json()['count'] >= 50
+    r=client.post('/api/v2/tools/run',headers={**hh,'Content-Type':'application/json'},json={'name':'local.text.slug','args':{'text':'Hello RAYONE World'}})
+    assert r.status_code==200 and r.json()['result']=='hello-rayone-world'
+
+def test_workflow_validation():
+    t=token(); hh=h(t)
+    r=client.post('/api/v2/workflows/validate',headers={**hh,'Content-Type':'application/json'},json={'steps':[{'type':'tool','name':'local.text.upper','args':{'text':'hello'}}]})
+    assert r.status_code==200 and r.json()['valid'] is True
