@@ -136,3 +136,22 @@ The production layer is implemented under `/api/v2/production/*`:
 The native creative engine is intentionally deterministic and zero-cost. It produces
 real inspectable artifacts for pipeline verification; high-quality learned
 generation remains an optional provider adapter rather than a mandatory dependency.
+
+## Production deployment
+
+The repository includes a hardened Docker runtime and persistent production compose file.
+
+- `Dockerfile`: non-root runtime user, persistent database path, and container healthcheck.
+- `docker-compose.production.yml`: persistent named volume for RAYONE data and restart policy.
+- `.dockerignore`: keeps secrets, local databases and development files out of the image build context.
+
+For production, set a strong `RAYONE_ADMIN_PASSWORD` and a persistent Fernet-compatible `RAYONE_SECRET_KEY` in `.env`. Keep the service behind HTTPS/reverse proxy when exposed publicly.
+
+Start with:
+
+```bash
+docker compose -f docker-compose.production.yml up -d --build
+```
+
+Then verify `/api/health` before using the dashboard.
+\n
