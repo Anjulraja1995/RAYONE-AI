@@ -3,6 +3,7 @@
 Every catalog entry is a real callable routed through execute_local().
 The pack is deterministic, offline-first, and has no paid dependency.
 """
+from pathlib import Path
 import base64, hashlib, hmac, html, json, math, random, re, secrets, statistics, time, uuid, urllib.parse, unicodedata
 from datetime import datetime, timezone, timedelta
 
