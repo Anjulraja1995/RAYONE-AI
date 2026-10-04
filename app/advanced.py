@@ -839,6 +839,56 @@ def workspace_stats(_:str=Depends(auth)):
     fs=legacy.rows("select count(*) n,coalesce(sum(size),0) bytes from workspace_files")[0]
     return {"files":fs["n"],"bytes":fs["bytes"],"media_jobs":legacy.rows("select count(*) n from media_jobs")[0]["n"]}
 
+class VorqyonIn(BaseModel):
+    mode: str
+    target: str=""
+    args: dict={}
+    expected: object|None=None
+    require_approval: bool=False
+
+def _verify_result(result, expected=None):
+    if expected is not None:
+        return {"ok":result==expected,"rule":"exact_match","expected":expected}
+    if result is None:
+        return {"ok":False,"rule":"non_null"}
+    if isinstance(result,dict) and result.get("error"):
+        return {"ok":False,"rule":"no_error","error":result.get("error")}
+    return {"ok":True,"rule":"execution_result_present"}
+
+@router.post("/vorqyon/execute")
+async def vorqyon_execute(x:VorqyonIn,_:str=Depends(auth)):
+    rid=str(uuid.uuid4())
+    trace("Understanding",rid,{"mode":x.mode,"target":x.target})
+    if x.require_approval:
+        aid=str(uuid.uuid4()); t=legacy.now()
+        legacy.execute("insert into approvals values(?,?,?,?,?,?,?)",(aid,"vorqyon.execute",x.target,legacy.dumps(x.model_dump()),"pending",t,None))
+        trace("Complete",rid,{"approval_required":True,"approval_id":aid})
+        return {"state":"Awaiting Approval","request_id":rid,"approval_id":aid}
+    trace("Planning",rid,{"mode":x.mode,"target":x.target})
+    try:
+        trace("Executing",rid)
+        if x.mode=="tool":
+            result=await legacy.execute_tool_internal(x.target,x.args)
+        elif x.mode=="workflow":
+            result=await legacy.run_workflow_internal(x.target,x.args)
+        elif x.mode=="chat":
+            answer,provider=await legacy.provider_chat(x.target,x.args.get("model_id"))
+            result={"answer":answer or ("RAYONE local core received: "+x.target),"provider":provider or "local"}
+        else:
+            raise HTTPException(400,"mode must be tool, workflow or chat")
+        trace("Verifying",rid)
+        verification=_verify_result(result,x.expected)
+        trace("Complete",rid,{"verified":verification["ok"]})
+        audit("vorqyon.execute","execution",{"request_id":rid,"mode":x.mode,"target":x.target,"verified":verification["ok"]})
+        return {"state":"Complete","request_id":rid,"result":result,"verification":verification}
+    except HTTPException:
+        trace("Complete",rid,{"verified":False})
+        raise
+    except Exception as e:
+        trace("Complete",rid,{"verified":False,"error":str(e)})
+        audit("vorqyon.failed","execution",{"request_id":rid,"error":str(e)})
+        raise HTTPException(500,str(e))
+
 @router.get("/tools/catalog")
 def tools_catalog(_:str=Depends(auth)):
     items=[]
