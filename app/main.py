@@ -545,7 +545,9 @@ async def startup():asyncio.create_task(worker_loop())
 from .advanced import router as advanced_router, scheduler_loop
 from .native_engines import router as native_engines_router
 app.include_router(advanced_router)
-app.include_router(native_engines_router)\nfrom .production_routes import router as production_router\napp.include_router(production_router)
+app.include_router(native_engines_router)
+from .production_routes import router as production_router
+app.include_router(production_router)
 
 @app.on_event("startup")
 async def advanced_startup():
