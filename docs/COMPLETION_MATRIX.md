@@ -52,7 +52,7 @@ Live runtime validation of external credentials, browser binaries, native OCR en
 ## Latest implementation pass
 
 The repository now includes:
-- 1,144 executable zero-cost local capabilities across 38 functional families (text, math, data, validation, conversion, media, automation, security and more).
+- 1,152 executable zero-cost local capabilities across 38 functional families (text, math, data, validation, conversion, media, automation, security and more).
 - A shared local tool registry and execution path, rather than dashboard-only placeholders.
 - A live workflow draft builder in the web dashboard.
 - Workflow validation against the actual enabled tool registry.
