@@ -1235,6 +1235,107 @@ def _value(a):
         if k in a: return a[k]
     return ""
 
+def _extended_local(family, op, a):
+    v=a.get("value",a.get("text",""))
+    if family=="finance":
+        x=float(a.get("value",a.get("amount",0))); rate=float(a.get("rate",a.get("percent",0)))
+        if op=="percentage": return x*rate/100
+        if op=="discount": return {"original":x,"rate":rate,"discount":x*rate/100,"final":x*(1-rate/100)}
+        if op=="markup": return x*(1+rate/100)
+        if op=="tax": return x*(1+rate/100)
+        if op=="tip": return x*(1+rate/100)
+        if op=="simple_interest": return x*rate*float(a.get("time",a.get("years",1)))/100
+        if op=="profit": return x-float(a.get("cost",0))
+        if op=="margin": return (x-float(a.get("cost",0)))/x*100 if x else 0
+        if op=="roi": return (x-float(a.get("cost",0)))/float(a.get("cost",1))*100
+        if op=="break_even": return float(a.get("fixed_cost",0))/(float(a.get("price",1))-float(a.get("variable_cost",0)))
+    if family=="geometry":
+        pi=math.pi
+        if op=="rectangle_area": return float(a.get("length",0))*float(a.get("width",0))
+        if op=="rectangle_perimeter": return 2*(float(a.get("length",0))+float(a.get("width",0)))
+        if op=="square_area": return float(a.get("side",0))**2
+        if op=="circle_area": return pi*float(a.get("radius",0))**2
+        if op=="circle_circumference": return 2*pi*float(a.get("radius",0))
+        if op=="triangle_area": return .5*float(a.get("base",0))*float(a.get("height",0))
+        if op=="cube_volume": return float(a.get("side",0))**3
+        if op=="sphere_volume": return 4*pi*float(a.get("radius",0))**3/3
+        if op=="cylinder_volume": return pi*float(a.get("radius",0))**2*float(a.get("height",0))
+        if op=="box_volume": return float(a.get("length",0))*float(a.get("width",0))*float(a.get("height",0))
+        if op=="distance_2d": return math.hypot(float(a.get("x2",0))-float(a.get("x1",0)),float(a.get("y2",0))-float(a.get("y1",0)))
+        if op=="pythagorean": return math.hypot(float(a.get("a",0)),float(a.get("b",0)))
+    if family=="probability":
+        if op=="complement": return 1-float(a.get("p",a.get("value",0)))
+        if op=="odds_to_probability":
+            o=float(a.get("odds",0)); return o/(1+o)
+        if op=="probability_to_odds":
+            p=float(a.get("p",a.get("value",0))); return p/(1-p) if p<1 else None
+        if op=="combination": return math.comb(int(a.get("n",0)),int(a.get("r",0)))
+        if op=="permutation": return math.perm(int(a.get("n",0)),int(a.get("r",0)))
+    if family=="colors":
+        h=str(v).strip().lstrip("#")
+        if op=="normalize_hex":
+            h="".join(ch*2 for ch in h) if len(h)==3 else h
+            return "#"+h.lower() if len(h) in (6,8) else None
+        if op=="invert" and len(h)==6: return "#"+"".join(f"{255-int(h[i:i+2],16):02x}" for i in (0,2,4))
+        if op=="luminance" and len(h)>=6:
+            rgb=[int(h[i:i+2],16)/255 for i in (0,2,4)]; return round(.2126*rgb[0]+.7152*rgb[1]+.0722*rgb[2],6)
+        if op=="is_dark": return float(_extended_local("colors","luminance",{"value":v}) or 0)<.5
+        if op=="is_light": return not _extended_local("colors","is_dark",{"value":v})
+    if family=="datetime":
+        now=datetime.now(timezone.utc)
+        if op=="utc_iso": return now.isoformat()
+        if op=="date": return now.date().isoformat()
+        if op=="time": return now.time().isoformat(timespec="seconds")
+        if op=="year": return now.year
+        if op=="month": return now.month
+        if op=="day": return now.day
+        if op=="weekday": return now.weekday()
+        if op=="is_leap_year":
+            y=int(a.get("year",now.year)); return y%4==0 and (y%100!=0 or y%400==0)
+        if op=="add_days": return (now+timedelta(days=float(a.get("days",1)))).isoformat()
+    if family=="language":
+        s=str(v)
+        if op=="sentence_count": return len([x for x in re.split(r"[.!?]+",s) if x.strip()])
+        if op=="paragraph_count": return len([x for x in re.split(r"\n\s*\n",s) if x.strip()])
+        if op=="sentence_split": return [x.strip() for x in re.split(r"[.!?]+",s) if x.strip()]
+        if op=="extract_numbers": return re.findall(r"-?\d+(?:\.\d+)?",s)
+        if op=="extract_emails": return re.findall(r"[^\s@]+@[^\s@]+\.[^\s@]+",s)
+        if op=="extract_urls": return re.findall(r"https?://[^\s]+",s)
+        if op=="remove_punctuation": return re.sub(r"[\W_]+"," ",s).strip()
+    if family=="files":
+        p=Path(str(v))
+        if op=="basename": return p.name
+        if op=="dirname": return str(p.parent)
+        if op=="stem": return p.stem
+        if op=="extension": return p.suffix.lower().lstrip(".")
+        if op=="depth": return len(p.parts)
+        if op=="has_extension": return bool(p.suffix)
+        if op in ("safe_name","normalize_name","filename_slug"): return re.sub(r"[^A-Za-z0-9._-]+","_",p.name).strip("._")
+    if family=="network":
+        u=urllib.parse.urlparse(str(v))
+        if op=="hostname": return u.hostname
+        if op=="port": return u.port
+        if op=="is_https": return u.scheme=="https"
+        if op=="is_http": return u.scheme in ("http","https")
+        if op=="url_origin": return f"{u.scheme}://{u.netloc}" if u.scheme and u.netloc else ""
+        if op=="url_path": return u.path
+        if op=="url_query": return u.query
+        if op=="url_fragment": return u.fragment
+    if family=="api":
+        code=int(a.get("status",a.get("value",0)))
+        if op=="status_class": return f"{code//100}xx"
+        if op=="is_success": return 200<=code<300
+        if op=="is_redirect": return 300<=code<400
+        if op=="is_client_error": return 400<=code<500
+        if op=="is_server_error": return 500<=code<600
+        if op=="retryable": return code in {408,425,429,500,502,503,504}
+        if op=="method_valid": return str(a.get("method","")).upper() in {"GET","POST","PUT","PATCH","DELETE","HEAD","OPTIONS"}
+    if family=="sets":
+        x=set(a.get("left",[])); y=set(a.get("right",[]))
+        if op=="equal": return x==y
+        if op in ("overlap_ratio","jaccard"): return len(x&y)/len(x|y) if x|y else 1.0
+    return None
+
 def execute_local(family, op, a):
     if family=="advanced_native":
         from .native_engines import native_search, research as native_research, _document_extract, _csv_analyze, code_analyze, workflow_plan, _safe_workspace_path
@@ -1516,8 +1617,8 @@ def execute_local(family, op, a):
     if op in ("safe_filename","normalize_name","filename_slug","safe_name"): return re.sub(r"[^A-Za-z0-9._-]+","_",text).strip("._")
     if op in ("extension","stem"):
         name=text.rsplit("/",1)[-1]; stem=name.rsplit(".",1)[0] if "." in name else name; return (name.rsplit(".",1)[1] if "." in name else "") if op=="extension" else stem
-    # Generic deterministic capability fallback: still executes and returns inspectable output.
-    return {"family":family,"operation":op,"value":v,"args":a}
-
+    extended=_extended_local(family,op,a)
+    if extended is not None: return extended
+    raise ValueError(f"Local capability has no safe implementation: {family}.{op}")
 def build_builtin_pack():
     return {family:{op:(lambda args, f=family, o=op: execute_local(f,o,args)) for op in ops} for family,ops in FAMILIES.items()}
