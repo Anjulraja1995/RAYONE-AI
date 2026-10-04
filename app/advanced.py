@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 from pathlib import Path
 import asyncio, base64, hashlib, json, mimetypes, os, re, time, uuid, datetime, zipfile
 from . import main as legacy
+from .local_tools import TOTAL_CAPABILITIES
 
 router = APIRouter(prefix="/api/v2", tags=["RAYONE v2 control plane"])
 ROOT = legacy.ROOT
@@ -931,6 +932,7 @@ def capabilities(_:str=Depends(auth)):
       "core":["auth","projects","providers","models","tools","agents","workflows","memory","jobs","events","audit","checkpoint","import_export"],
       "v2":["state_machine","streaming","approvals","permissions","research","document_extraction","semantic_memory","scheduler","media_contract","connectors","github","gitlab","backups","provider_failover","observability","local_tool_pack","workflow_validation","vorqyon_execution_verification"],
       "optional":["native_android","native_desktop","ocr","browser_automation","real_media_generation","messaging_connectors"],
+      "local_tool_capabilities":TOTAL_CAPABILITIES,
       "policy":"Optional capabilities activate only when their adapter/dependency/credential is configured; unavailable integrations are never faked."
     }
 
