@@ -122,11 +122,20 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
         except Exception:
             existing=_row(request_id)
     _trace(request_id,"Queued")
-    _save(request_id,"Understanding",intent=kind or (classify(message) if message else "tool"),target=target or "")
-    intent=kind or (classify(message) if message else "tool")
-    _trace(request_id,"Understanding",{"message":message,"intent":intent})
-    from .local_brain import build_plan, calculator_expression
-    plan=build_plan(message,intent)
+    context=[]
+    if conversation_id:
+        try:
+            rows=legacy.rows("select content from messages where conversation_id=? order by created desc limit 8",(conversation_id,))
+            context=list(reversed(rows or []))
+        except Exception:
+            context=[]
+    from .local_brain import build_plan, calculator_expression, resolve_followup
+    resolved=resolve_followup(message,context)
+    intent=kind or resolved.get("intent") or (classify(message) if message else "tool")
+    effective_message=resolved.get("message") or message
+    _save(request_id,"Understanding",intent=intent,target=target or "")
+    _trace(request_id,"Understanding",{"message":message,"effective_message":effective_message,"intent":intent})
+    plan=build_plan(effective_message,intent)
     _trace(request_id,"Planning",plan)
     if require_approval:
         adv=_advanced()
@@ -156,7 +165,7 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             if not _verified(result): raise RuntimeError("Tool verification failed")
             out={"request_id":request_id,"state":"Complete","intent":"tool","target":name,"plan":plan,"result":result}
         elif intent=="research":
-            result=await _native_research(message)
+            result=await _native_research(effective_message)
             if not _verified(result): raise RuntimeError("Research verification failed")
             out={"request_id":request_id,"state":"Complete","intent":"research","plan":plan,"result":result}
         elif intent=="knowledge":
@@ -175,10 +184,10 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             low=message.lower()
             kind2=target or ("video" if "video" in low else "music" if "music" in low else
                              "audio" if "audio" in low else "voice" if any(x in low for x in ("voice","tts","speech")) else "image")
-            result=_native_media(kind2,message)
+            result=_native_media(kind2,effective_message)
             mid=str(uuid.uuid4()); t=legacy.now()
             legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",
-                (mid,kind2,"completed",legacy.dumps({"prompt":message}),legacy.dumps(result),"native",t,t))
+                (mid,kind2,"completed",legacy.dumps({"prompt":effective_message}),legacy.dumps(result),"native",t,t))
             out={"request_id":request_id,"state":"Complete","intent":"media","plan":plan,"media_job_id":mid,
                  "status":"completed","provider":"native","result":result}
         elif intent=="workflow":
@@ -212,7 +221,7 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             if not _verified(result): raise RuntimeError("Workspace search verification failed")
             out={"request_id":request_id,"state":"Complete","intent":intent,"result":result}
         elif intent=="chat":
-            result=await _chat(message,model_id,intent)
+            result=await _chat(effective_message,model_id,intent)
             out={"request_id":request_id,"state":"Complete","intent":"chat","plan":plan,**result}
         else:
             result=await _chat(message,model_id,intent)
