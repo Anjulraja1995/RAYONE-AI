@@ -1,7 +1,7 @@
 """RAYONE native advanced engines: offline-first research, documents, data, code and orchestration."""
 from pathlib import Path
-from urllib.parse import urlparse
-import ast, csv, io, json, math, mimetypes, re, statistics, time, uuid
+from urllib.parse import urlparse, quote_plus
+import ast, csv, io, json, math, mimetypes, re, statistics, time, uuid, urllib.request, urllib.parse
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -52,13 +52,41 @@ def native_search(query, limit=10):
     rows.sort(key=lambda x:(-x["score"],x["path"]))
     return {"query":query,"results":rows[:max(1,min(int(limit),50))],"engine":"rayone-native-local-index","external_source_used":False}
 
+def _web_search(query, limit=5):
+    url="https://html.duckduckgo.com/html/?q="+quote_plus(query)
+    req=urllib.request.Request(url,headers={"User-Agent":"RAYONE-AI/2.0"})
+    with urllib.request.urlopen(req,timeout=12) as response:
+        raw=response.read(500000).decode("utf-8","ignore")
+    links=re.findall(r'nofollow" class="result__a" href="([^"]+)"[^>]*>(.*?)</a>',raw,re.I|re.S)
+    out=[]
+    for href,title in links[:max(1,min(int(limit),10))]:
+        title=re.sub(r"<[^>]+>","",title)
+        href=href.replace("&amp;","&")
+        out.append({"url":href,"title":re.sub(r"\\s+"," ",title).strip()})
+    return out
+
 def research(query, max_sources=5):
     query=str(query).strip()
     if not query: raise ValueError("query required")
     if re.match(r"^https?://",query,re.I):
         fetched=browser_fetch_text(query,max_bytes=400000)
         text_value=fetched.get("text","")
-        return {"query":query,"mode":"url","engine":"rayone-native-research","sources":[{"url":query,"status":fetched.get("status",0),"title":text_value[:160],"text":text_value[:12000],"score":1.0}],"source_count":1,"verified":bool(text_value)}
+        return {"query":query,"mode":"url","engine":"rayone-native-research","sources":[{"url":query,"status":fetched.get("status",0),"title":text_value[:160],"text":text_value[:12000],"score":1.0}],"source_count":1,"verified":bool(text_value),"external_source_used":True}
+    try:
+        hits=_web_search(query,max_sources)
+        sources=[]
+        for hit in hits:
+            try:
+                fetched=browser_fetch_text(hit["url"],max_bytes=120000)
+                text_value=fetched.get("text","")
+                if text_value:
+                    sources.append(hit|{"status":fetched.get("status",0),"text":text_value[:12000],"score":1.0})
+            except Exception:
+                continue
+        if sources:
+            return {"query":query,"mode":"web","engine":"rayone-native-research","sources":sources,"source_count":len(sources),"verified":True,"external_source_used":True}
+    except Exception:
+        pass
     local=native_search(query,max_sources)
     sources=[]
     for item in local["results"]:
