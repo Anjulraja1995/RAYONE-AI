@@ -35,6 +35,17 @@ def ensure_store():
         updated REAL NOT NULL
     )""")
 
+    legacy.execute("""CREATE TABLE IF NOT EXISTS conversation_state(
+        conversation_id TEXT PRIMARY KEY,
+        pending_intent TEXT,
+        pending_kind TEXT,
+        pending_message TEXT,
+        last_request_id TEXT,
+        last_state TEXT,
+        last_result TEXT,
+        updated REAL NOT NULL
+    )""")
+
 def _conversation_state(conversation_id):
     if not conversation_id: return {}
     row=_legacy().one("select * from conversation_state where conversation_id=?",(conversation_id,))
