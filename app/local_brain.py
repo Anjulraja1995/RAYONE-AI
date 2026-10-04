@@ -56,6 +56,14 @@ def is_execute_followup(message: str) -> bool:
     m=str(message or "").strip().lower()
     return bool(re.match(r"^(banao|banाओ|create it|make it|do it|go ahead|ok|okay|complete|complete it|yes|haan|ha|करो|बनाओ|बना दो|ठीक है|कम्प्लीट करो|कर दो|हाँ|हां)\b",m))
 
+def split_compound_tasks(message: str) -> list[str]:
+    """Split only explicit task sequencing; preserve ordinary creative prose."""
+    msg=str(message or "").strip()
+    if not msg: return []
+    parts=re.split(r"\s*(?:;|\n+|\bthen\b|\band then\b|\bafter that\b|\bफिर\b|\bऔर फिर\b)\s*",msg,flags=re.I)
+    return [p.strip(" .") for p in parts if p.strip(" .")]
+
+
 def resolve_followup(message: str, context: list[dict] | None = None, pending: dict | None = None) -> dict[str, str]:
     msg=str(message or "").strip()
     if is_status_followup(msg):
@@ -106,6 +114,11 @@ def infer_local_tool(message: str):
     if low.startswith(("sha256 ","hash sha256 ")):
         body=re.sub(r"^(hash sha256|sha256)\s*","",m,flags=re.I)
         return "local.crypto.sha256",{"text":body}
+    expr_match=re.search(r"(?i)(?:what is|whats|solve|evaluate|calculate|compute)\s*([0-9\s()+\-*/%.×÷^]+)\s*\??$",m)
+    if expr_match:
+        expr=expr_match.group(1).strip().replace("×","*").replace("÷","/").replace("^","**")
+        if re.fullmatch(r"[0-9\s()+\-*/%.]+",expr):
+            return "core.calculator",{"expression":expr}
     return None
 
 def calculator_expression(message: str) -> str:
