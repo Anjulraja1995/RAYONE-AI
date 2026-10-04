@@ -74,3 +74,19 @@ def test_v2_cron_validation():
     t=token(); hh=h(t)
     r=client.post('/api/v2/automation/cron',headers={**hh,'Content-Type':'application/json'},json={'name':'cron-test','expression':'* * * * *','action':'chat','payload':{'message':'hello'}})
     assert r.status_code==200 and 'next_run' in r.json()
+
+
+def test_v2_conversation_persistence():
+    t=token(); hh=h(t)
+    r=client.post('/api/v2/assistant/chat',headers=hh,json={'message':'hello persistence'})
+    assert r.status_code==200 and r.json().get('conversation_id')
+    cid=r.json()['conversation_id']
+    m=client.get('/api/v2/conversations/'+cid+'/messages',headers=hh)
+    assert m.status_code==200 and len(m.json())>=2
+
+def test_password_hash_roundtrip():
+    from app.main import hash_password, verify_password
+    encoded=hash_password("A-strong-test-password-2026")
+    assert encoded.startswith("scrypt$")
+    assert verify_password("A-strong-test-password-2026",encoded)
+    assert not verify_password("wrong-password",encoded)
