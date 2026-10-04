@@ -1,0 +1,49 @@
+# RAYONE AI — Completion Matrix
+
+## Implemented in the repository
+- Core API, persistent SQLite state, authentication, sessions and protected admin APIs
+- Provider/model registry, encrypted provider API-key storage, health and ordered failover
+- RAYONE assistant routing, execution state machine, streaming SSE and persistent conversations
+- Automatic conversation memory indexing with lexical semantic ranking
+- Tools, agents, workflows, jobs, cancellation/retry and scheduler
+- Interval, cron and one-time automation
+- Research/search adapter and document extraction for TXT/MD/CSV/JSON/HTML/XML/log/PDF/DOCX/XLSX
+- Workspace file storage, download, indexing and statistics
+- Permissions, consequential-action approval and audit trace
+- GitHub and GitLab adapters with approval-gated mutations
+- Generic HTTP connector framework with approval-gated mutations
+- Media job contract and queue
+- Metrics, diagnostics, traces and audit events
+- Checkpoints, JSON export/import, ZIP backups, retention and backup import
+- Security session controls and scrypt password override
+- Responsive Universal Command Center dashboard
+- Browser speech input/output
+- Android client with REST connection, voice input and spoken output
+- Optional Electron desktop shell
+- CI workflow and regression tests
+- Environment template and zero-cost/local-first policy
+
+## Credential/runtime-gated capabilities
+These are real adapter contracts, not fake implementations. They activate only when the required runtime or credential is supplied:
+- hosted AI providers
+- GitHub/GitLab authenticated mutation
+- external messaging/email/calendar/social connectors
+- real image/video/audio/music generation engines
+- OCR engines requiring a native OCR binary
+- browser automation requiring a browser runtime
+- cloud object storage
+
+## Definition of done
+The core platform is complete when:
+1. Login protects the control plane.
+2. RAYONE accepts text/voice requests.
+3. Requests move through explicit states and produce audit traces.
+4. Tools, agents, workflows, memory, files and jobs share the same persistent control plane.
+5. Consequential external actions require approval.
+6. Recovery and backups are available.
+7. External capabilities never claim to be active without their adapter/credential.
+8. Android and desktop clients use the same API surface.
+9. CI runs the regression suite on every push/PR.
+
+## Remaining environmental validation
+Live runtime validation of external credentials, browser binaries, native OCR engines, real media providers, Android APK compilation and desktop packaging must be performed in the target runtime environment. The repository does not mark these as active until they are actually configured.
