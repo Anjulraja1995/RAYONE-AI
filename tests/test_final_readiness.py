@@ -68,3 +68,12 @@ def test_planning_is_executed_not_chat_fallback():
     })
     assert r.status_code==200 and r.json().get("intent")=="planning"
     assert r.json().get("result",{}).get("steps")
+
+
+def test_natural_language_routes_to_local_capabilities():
+    h=login()
+    a=client.post("/api/v2/assistant/chat",headers=h,json={"message":"Convert 10 km to miles","request_id":"natural-conversion"})
+    assert a.status_code==200 and a.json().get("intent")=="tool"
+    assert a.json().get("result") is not None
+    b=client.post("/api/v2/assistant/chat",headers=h,json={"message":"Translate hello to Hindi","request_id":"natural-translation"})
+    assert b.status_code==200 and b.json().get("intent")=="tool"
