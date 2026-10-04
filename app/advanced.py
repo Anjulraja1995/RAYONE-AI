@@ -827,7 +827,7 @@ async def run_schedule_now(id:str,_:str=Depends(auth)):
     audit("schedule.manual_run","schedule",{"id":id,"kind":s["kind"]})
     return result
 
-async def _provider_failover(message,model_id=None):
+async def _provider_failover(message,model_id=None,history=None):
     models=legacy.rows("select m.*,p.name provider_name,p.base_url,p.config provider_config from models m left join providers p on p.id=m.provider_id where m.enabled=1 and p.enabled=1 order by m.rowid")
     if model_id:
         models=[x for x in models if x["id"]==model_id]+[x for x in models if x["id"]!=model_id]
@@ -845,7 +845,14 @@ async def _provider_failover(message,model_id=None):
             headers={"Authorization":"Bearer "+token} if token else {}
             started=legacy.now()
             async with legacy.httpx.AsyncClient(timeout=45) as c:
-                r=await c.post(url,headers=headers,json={"model":m["model"],"messages":[{"role":"user","content":message}]})
+                messages=[{"role":"system","content":"You are RAYONE AI. Use the supplied conversation context when relevant. Do not claim an action was executed unless the execution pipeline supplied the result."}]
+                for item in (history or [])[-10:]:
+                    role=str(item.get("role","user")) if isinstance(item,dict) else "user"
+                    content=str(item.get("content","")) if isinstance(item,dict) else str(item)
+                    if role not in {"user","assistant","system"}: role="user"
+                    if content: messages.append({"role":role,"content":content[:6000]})
+                messages.append({"role":"user","content":message})
+                r=await c.post(url,headers=headers,json={"model":m["model"],"messages":messages})
                 latency=legacy.now()-started
                 metric("provider.calls"); metric("provider.latency_seconds",latency)
                 if r.status_code>=400: raise RuntimeError(f"HTTP {r.status_code}")
