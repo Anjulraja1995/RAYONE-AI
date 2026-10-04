@@ -56,6 +56,23 @@ def execute(sql, args=()):
 def emit(t, p): execute("INSERT INTO events VALUES(?,?,?,?)", (str(uuid.uuid4()), t, dumps(p), now()))
 def audit(a, t, d): execute("INSERT INTO audits VALUES(?,?,?,?,?)", (str(uuid.uuid4()), a, t, dumps(d), now()))
 
+def hash_password(password: str) -> str:
+    salt = os.urandom(16)
+    digest = hashlib.scrypt(password.encode(), salt=salt, n=2**14, r=8, p=1)
+    return "scrypt$16384$8$1$" + base64.urlsafe_b64encode(salt).decode() + "$" + base64.urlsafe_b64encode(digest).decode()
+
+def verify_password(password: str, stored: str) -> bool:
+    if not stored.startswith("scrypt$"):
+        return secrets.compare_digest(password, stored)
+    try:
+        _, n, r, p, salt_b64, digest_b64 = stored.split("$", 5)
+        salt=base64.urlsafe_b64decode(salt_b64.encode())
+        expected=base64.urlsafe_b64decode(digest_b64.encode())
+        actual=hashlib.scrypt(password.encode(), salt=salt, n=int(n), r=int(r), p=int(p))
+        return secrets.compare_digest(actual, expected)
+    except Exception:
+        return False
+
 def init():
     c = conn(); c.executescript(SCHEMA)
     if not c.execute("SELECT 1 FROM projects LIMIT 1").fetchone():
@@ -89,7 +106,9 @@ class SettingIn(BaseModel): value: str
 
 @app.post("/api/auth/login")
 def login(x: LoginIn):
-    if not secrets.compare_digest(x.password, ADMIN_PASSWORD):
+    override = one("SELECT value FROM settings WHERE key=?", ("admin_password_hash",))
+    valid = verify_password(x.password, override["value"]) if override else secrets.compare_digest(x.password, ADMIN_PASSWORD)
+    if not valid:
         audit("login_failed", "auth", {})
         raise HTTPException(401, "Invalid credentials")
     token = secrets.token_urlsafe(32); execute("INSERT INTO sessions VALUES(?,?,?)", (token, now(), now()+86400))
