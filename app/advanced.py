@@ -26,6 +26,8 @@ def init_advanced():
     CREATE TABLE IF NOT EXISTS connectors(id TEXT PRIMARY KEY, name TEXT, kind TEXT, base_url TEXT, enabled INTEGER, config TEXT, created REAL, updated REAL);
     CREATE TABLE IF NOT EXISTS metrics_v2(key TEXT PRIMARY KEY, value REAL, updated REAL);
     CREATE TABLE IF NOT EXISTS memory_index(id TEXT PRIMARY KEY, memory_id TEXT, tokens TEXT, fingerprint TEXT, created REAL);
+    CREATE TABLE IF NOT EXISTS conversations(id TEXT PRIMARY KEY, project_id TEXT, title TEXT, created REAL, updated REAL);
+    CREATE TABLE IF NOT EXISTS messages(id TEXT PRIMARY KEY, conversation_id TEXT, role TEXT, content TEXT, state TEXT, provider TEXT, created REAL);
     """)
     c.commit(); c.close()
 
@@ -541,12 +543,12 @@ def security_revoke_sessions(_:str=Depends(auth)):
 
 @router.post("/security/password")
 def security_password(x:PasswordChangeIn,token:str=Depends(auth)):
-    current=_setting("admin_password_override", legacy.ADMIN_PASSWORD)
-    if not __import__("secrets").compare_digest(x.current_password,current):
-        raise HTTPException(401,"Current password is invalid")
-    _set_setting("admin_password_override",x.new_password)
+    override=_setting("admin_password_hash","")
+    valid=legacy.verify_password(x.current_password,override) if override else __import__("secrets").compare_digest(x.current_password,legacy.ADMIN_PASSWORD)
+    if not valid: raise HTTPException(401,"Current password is invalid")
+    legacy._set_setting("admin_password_hash",legacy.hash_password(x.new_password)) if hasattr(legacy,"_set_setting") else legacy.execute("insert into settings(key,value,updated) values(?,?,?) on conflict(key) do update set value=excluded.value,updated=excluded.updated",("admin_password_hash",legacy.hash_password(x.new_password),legacy.now()))
     audit("security.password_changed","auth",{})
-    return {"ok":True,"note":"Password override is stored in local encrypted application state; restart-safe."}
+    return {"ok":True,"note":"Password override is stored as a scrypt hash."}
 
 @router.get("/security/config")
 def security_config(_:str=Depends(auth)):
