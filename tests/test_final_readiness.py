@@ -98,3 +98,17 @@ def test_explicit_compound_request_executes_each_step():
     assert len(steps)==2
     assert steps[0].get("result")==15
     assert steps[1].get("result")==60
+
+
+def test_natural_local_pack_routing():
+    h=login()
+    cases=[
+        ("Uppercase hello world","HELLO WORLD"),
+        ("What is the square root of 81","9.0"),
+        ("Generate uuid",""),
+    ]
+    for msg,expected in cases:
+        r=client.post("/api/v2/assistant/chat",headers=h,json={"message":msg,"request_id":"route-"+str(abs(hash(msg)))})
+        assert r.status_code==200, r.text
+        d=r.json(); assert d.get("state")=="Complete", d
+        if expected: assert str(d.get("result"))==expected or str(d.get("result")).startswith(expected)
