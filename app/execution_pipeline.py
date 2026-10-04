@@ -161,6 +161,18 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             result=await _native_research(message)
             if not _verified(result): raise RuntimeError("Research verification failed")
             out={"request_id":request_id,"state":"Complete","intent":"research","result":result}
+        elif intent=="knowledge":
+            from .native_engines import _document_extract
+            path=str((args or {}).get("path","")).strip()
+            if not path: raise ValueError("Document path required")
+            result=_document_extract(path)
+            if not _verified(result): raise RuntimeError("Document verification failed")
+            out={"request_id":request_id,"state":"Complete","intent":"knowledge","result":result}
+        elif intent=="devops":
+            from .native_engines import native_search
+            result=native_search(message,10)
+            if not _verified(result): raise RuntimeError("Workspace search verification failed")
+            out={"request_id":request_id,"state":"Complete","intent":"devops","result":result}
         elif intent=="media":
             low=message.lower()
             kind2=target or ("video" if "video" in low else "music" if "music" in low else
