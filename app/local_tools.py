@@ -7,6 +7,8 @@ import base64, hashlib, hmac, html, json, math, random, re, secrets, statistics,
 from datetime import datetime, timezone, timedelta
 
 FAMILIES = {
+    "web": ["fetch","search","extract_text","parse_url"],
+    "translation": ["local"],
     "text": [
         "lower",
         "upper",
@@ -1230,6 +1232,40 @@ def _value(a):
     return ""
 
 def execute_local(family, op, a):
+    if family=="web":
+        if op=="parse_url":
+            u=urllib.parse.urlparse(str(a.get("url",a.get("value",""))))
+            return {"scheme":u.scheme,"host":u.hostname,"port":u.port,"path":u.path,"query":u.query,"fragment":u.fragment}
+        if op=="extract_text":
+            raw=str(a.get("html",a.get("value","")))
+            return re.sub(r"\s+"," ",re.sub(r"<[^>]+>"," ",html.unescape(raw))).strip()
+        if op=="fetch":
+            import urllib.request
+            url=str(a.get("url",a.get("value",""))).strip()
+            if not re.match(r"^https?://",url): raise ValueError("http(s) URL required")
+            req=urllib.request.Request(url,headers={"User-Agent":"RAYONE-AI/2.0"})
+            with urllib.request.urlopen(req,timeout=20) as r:
+                raw=r.read(int(a.get("max_bytes",200000)))
+                return {"url":url,"status":getattr(r,"status",200),"content_type":r.headers.get("content-type",""),"text":raw.decode("utf-8","ignore"),"native":True}
+        if op=="search":
+            import urllib.request
+            query=str(a.get("query",a.get("value",""))).strip()
+            if not query: raise ValueError("query required")
+            url="https://html.duckduckgo.com/html/?q="+urllib.parse.quote_plus(query)
+            req=urllib.request.Request(url,headers={"User-Agent":"RAYONE-AI/2.0"})
+            with urllib.request.urlopen(req,timeout=20) as r: raw=r.read(300000).decode("utf-8","ignore")
+            results=[]
+            for x in re.finditer(r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',raw,re.S|re.I):
+                results.append({"title":re.sub(r"<[^>]+>","",html.unescape(x.group(2))).strip(),"url":html.unescape(x.group(1))})
+                if len(results)>=10: break
+            return {"query":query,"results":results,"native":True}
+    if family=="translation" and op=="local":
+        text_value=str(a.get("text",a.get("value","")))
+        target=str(a.get("target","hi")); source=str(a.get("source","en"))
+        table={("en","hi"):{"hello":"नमस्ते","thank you":"धन्यवाद","please":"कृपया","yes":"हाँ","no":"नहीं","welcome":"स्वागत है","goodbye":"अलविदा"}}
+        if source==target: return text_value
+        return " ".join(table.get((source,target),{}).get(w.lower(),w) for w in text_value.split())
+
     v=_value(a); text=str(v if not isinstance(v,(list,dict)) else a.get("text",v))
     items=a.get("items",a.get("values",[]))
     if not isinstance(items,list): items=[items]
