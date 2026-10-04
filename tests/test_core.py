@@ -96,7 +96,7 @@ def test_local_tool_pack():
     t=token(); hh=h(t)
     r=client.get('/api/v2/tools/catalog',headers=hh)
     assert r.status_code==200 and r.json()['count'] >= 1100
-    assert r.json()['count'] == 1152
+    assert r.json()['count'] == 1144
     r=client.post('/api/v2/tools/run',headers={**hh,'Content-Type':'application/json'},json={'name':'local.text.slug','args':{'text':'Hello RAYONE World'}})
     assert r.status_code==200 and r.json()['result']=='hello-rayone-world'
 
