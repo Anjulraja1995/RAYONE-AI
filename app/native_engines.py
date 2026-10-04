@@ -52,7 +52,7 @@ def native_search(query, limit=10):
     rows.sort(key=lambda x:(-x["score"],x["path"]))
     return {"query":query,"results":rows[:max(1,min(int(limit),50))],"engine":"rayone-native-local-index","external_source_used":False}
 
-async def research(query, max_sources=5):
+def research(query, max_sources=5):
     query=str(query).strip()
     if not query: raise ValueError("query required")
     if re.match(r"^https?://",query,re.I):
@@ -183,7 +183,7 @@ def search_endpoint(payload:dict,_:str=Depends(_auth)):
 
 @router.post("/research")
 async def research_endpoint(payload:dict,_:str=Depends(_auth)):
-    return await research(payload.get("query",""),payload.get("max_sources",5))
+    return research(payload.get("query",""),payload.get("max_sources",5))
 
 @router.post("/document")
 def document_endpoint(payload:dict,_:str=Depends(_auth)):
