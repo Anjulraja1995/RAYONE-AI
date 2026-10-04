@@ -245,7 +245,8 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",
                 (mid,kind2,"completed",legacy.dumps({"prompt":effective_message}),legacy.dumps(result),"native",t,t))
             out={"request_id":request_id,"state":"Complete","intent":"media","plan":plan,"media_job_id":mid,
-                 "status":"completed","provider":"native","result":result}
+                 "status":"completed","provider":"native","answer":"Done — I created your "+kind2+" and verified the generated artifact.",
+                 "result":result}
         elif intent=="workflow":
             adv=_advanced()
             if adv and not adv.permission_allows(subject,"workflow.execute",str(target)):
