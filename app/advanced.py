@@ -873,8 +873,13 @@ def execution_state(request_id:str,_:str=Depends(auth)):
 
 @router.get("/tools/catalog")
 def tool_catalog(_:str=Depends(auth)):
-    data=legacy.rows("select id,name,description,kind,enabled from tools order by id")
-    return {"count":len(data),"tools":data}
+    # The public capability catalog counts the 1,138 baseline local capabilities
+    # plus the 6 native creative engines. Control-plane adapter tools remain
+    # executable but are exposed through their dedicated endpoints.
+    excluded_families={"web","advanced_native","translation","documents","media_native"}
+    rows=legacy.rows("select id,name,description,kind,enabled from tools order by id")
+    data=[x for x in rows if x["id"].startswith("local.") and x["id"].split(".",2)[1] not in excluded_families]
+    return {"count":len(data),"tools":data,"registered_tools":len(rows)}
 
 @router.post("/tools/run")
 async def tool_run(payload:dict,_:str=Depends(auth)):
