@@ -1,7 +1,7 @@
 """Optional local-first adapters for browser-like fetch, OCR and media inspection.
 No paid service is required; capabilities degrade explicitly when a native runtime is absent.
 """
-import io, json, mimetypes, os, re, subprocess, tempfile, urllib.parse, urllib.request
+import io, json, mimetypes, os, re, subprocess, tempfile, urllib.parse, urllib.request, html as html_lib
 from pathlib import Path
 
 def browser_fetch(url, max_bytes=200000):
@@ -43,3 +43,25 @@ def media_probe(path):
             with wave.open(str(p),"rb") as w: result.update({"channels":w.getnchannels(),"sample_rate":w.getframerate(),"frames":w.getnframes(),"duration":w.getnframes()/w.getframerate()})
         except Exception: pass
     return result
+
+
+def browser_fetch_text(url, max_bytes=200000):
+    """Native research primitive: fetch a page and return normalized readable text."""
+    raw=browser_fetch(url,max_bytes=max_bytes)
+    raw["text"]=extract_text(raw.get("content",""))
+    return raw
+
+
+def translate_local(text, target, source="auto"):
+    """Deterministic zero-cost language helper for common UI/assistant phrases."""
+    value=str(text or "")
+    target=(target or "en").lower()
+    source=(source or "auto").lower()
+    # Keep arbitrary text intact when no safe local translation dictionary exists.
+    dictionaries={
+        "hi":{"hello":"नमस्ते","hi":"नमस्ते","thank you":"धन्यवाद","thanks":"धन्यवाद","yes":"हाँ","no":"नहीं","please":"कृपया","good morning":"सुप्रभात","goodbye":"अलविदा"},
+        "en":{"नमस्ते":"hello","धन्यवाद":"thank you","हाँ":"yes","नहीं":"no","कृपया":"please","सुप्रभात":"good morning","अलविदा":"goodbye"}
+    }
+    if target in dictionaries:
+        return {"text":dictionaries[target].get(value.lower(),value),"source":source,"target":target,"native":True}
+    return {"text":value,"source":source,"target":target,"native":True,"note":"passthrough for unsupported local language pair"}
