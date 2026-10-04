@@ -211,7 +211,13 @@ def infer_local_tool(message: str):
     q=re.search(r"\b(?:rectangle area|area of rectangle)\b\D*(\d+(?:\.\d+)?)\D+(\d+(?:\.\d+)?)",low,re.I)
     if q:return "local.geometry.rectangle_area",{"length":float(q.group(1)),"width":float(q.group(2))}
 
-    # Fall back to the existing exact aliases.
+    # Translation remains a native deterministic capability for supported pairs.
+    if low.startswith(("translate ","अनुवाद ","translate this ")):
+        body=re.sub(r"(?i)^(translate this|translate|अनुवाद)\s*","",m).strip()
+        target="hi" if any(x in low for x in ("hindi","हिंदी","to hindi","में हिंदी")) else "en"
+        return "local.translation.local",{"text":body,"source":"en","target":target}
+
+    # Fall back to provider-backed/open-ended chat when no safe local mapping exists.
     return None
 
 def calculator_expression(message: str) -> str:
