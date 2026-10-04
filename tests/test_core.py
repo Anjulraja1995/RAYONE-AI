@@ -189,3 +189,13 @@ def test_native_creative_tools_execute(tmp_path):
         assert data["native"] is True
         assert data["mime"]==marker
         assert data["size"]>0
+
+def test_native_media_job_completes_without_provider():
+    t=token(); hh=h(t)
+    r=client.post("/api/v2/media",headers={**hh,"Content-Type":"application/json"},
+                  json={"kind":"image","input":{"prompt":"native media job"}})
+    assert r.status_code==200, r.text
+    data=r.json()
+    assert data["status"]=="completed"
+    assert data["provider"]=="native"
+    assert data["result"]["native"] is True
