@@ -62,14 +62,8 @@ def _tokens(text):
     return set(re.findall(r"[A-Za-z0-9\u0900-\u097F]{3,}",str(text or "").lower()))
 
 def classify(message:str)->str:
-    m=message.lower().strip()
-    if re.search(r"\b(search|research|find|latest|news|web)\b",m): return "research"
-    if re.search(r"\b(calculate|compute|math|sum|add|subtract|multiply|divide)\b",m): return "tool"
-    if re.search(r"\b(schedule|remind|every day|every hour|cron)\b",m): return "automation"
-    if re.search(r"\b(image|video|audio|music|voice|tts|speech)\b",m): return "media"
-    if re.search(r"\b(file|document|pdf|docx|xlsx|upload)\b",m): return "knowledge"
-    if re.search(r"\b(github|gitlab|repository|commit|pull request|issue)\b",m): return "devops"
-    return "chat"
+    from .local_brain import classify as brain_classify
+    return brain_classify(message)
 
 def _verified(result):
     if result is None: return False
@@ -89,7 +83,7 @@ def _native_media(kind,prompt):
     if not _verified(result): raise RuntimeError("Native media verification failed")
     return result
 
-async def _chat(message,model_id=None):
+async def _chat(message,model_id=None,intent='chat'):
     legacy=_legacy()
     adv=_advanced()
     try:
@@ -104,8 +98,10 @@ async def _chat(message,model_id=None):
         try: legacy.metric("provider.failures")
         except Exception: pass
     mem=legacy.rows("select content from memories where content like ? order by created desc limit 5",(f"%{message[:40]}%",))
-    answer="RAYONE local core received: "+message
-    if mem: answer+="\nRelevant memory: "+" ".join(m["content"] for m in mem)
+    from .local_brain import local_response
+    answer=local_response(message,intent)
+    if mem:
+        answer+="\n\nRelevant memory: "+" ".join(m["content"][:1000] for m in mem)
     return {"answer":answer,"provider":"local","native":True,"provider_failures":0}
 
 async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_approval=False,
@@ -129,7 +125,9 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
     _save(request_id,"Understanding",intent=kind or (classify(message) if message else "tool"),target=target or "")
     intent=kind or (classify(message) if message else "tool")
     _trace(request_id,"Understanding",{"message":message,"intent":intent})
-    _trace(request_id,"Planning",{"intent":intent,"target":target})
+    from .local_brain import build_plan, calculator_expression
+    plan=build_plan(message,intent)
+    _trace(request_id,"Planning",plan)
     if require_approval:
         adv=_advanced()
         if not adv: raise RuntimeError("Approval engine unavailable")
@@ -149,30 +147,30 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
         if intent=="tool":
             name=target
             if not name:
-                expr=re.sub(r"^(please\s+)?(calculate|compute)\s+","",message,flags=re.I)
+                expr=calculator_expression(message)
                 name="core.calculator"; args={"expression":expr}
             adv=_advanced()
             if adv and not adv.permission_allows(subject,"tool.execute",name):
                 raise PermissionError("Tool execution denied by permission policy")
             result=await legacy.execute_tool_internal(name,args or {})
             if not _verified(result): raise RuntimeError("Tool verification failed")
-            out={"request_id":request_id,"state":"Complete","intent":"tool","target":name,"result":result}
+            out={"request_id":request_id,"state":"Complete","intent":"tool","target":name,"plan":plan,"result":result}
         elif intent=="research":
             result=await _native_research(message)
             if not _verified(result): raise RuntimeError("Research verification failed")
-            out={"request_id":request_id,"state":"Complete","intent":"research","result":result}
+            out={"request_id":request_id,"state":"Complete","intent":"research","plan":plan,"result":result}
         elif intent=="knowledge":
             from .native_engines import _document_extract
             path=str((args or {}).get("path","")).strip()
             if not path: raise ValueError("Document path required")
             result=_document_extract(path)
             if not _verified(result): raise RuntimeError("Document verification failed")
-            out={"request_id":request_id,"state":"Complete","intent":"knowledge","result":result}
+            out={"request_id":request_id,"state":"Complete","intent":"knowledge","plan":plan,"result":result}
         elif intent=="devops":
             from .native_engines import native_search
             result=native_search(message,10)
             if not _verified(result): raise RuntimeError("Workspace search verification failed")
-            out={"request_id":request_id,"state":"Complete","intent":"devops","result":result}
+            out={"request_id":request_id,"state":"Complete","intent":"devops","plan":plan,"result":result}
         elif intent=="media":
             low=message.lower()
             kind2=target or ("video" if "video" in low else "music" if "music" in low else
@@ -181,7 +179,7 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             mid=str(uuid.uuid4()); t=legacy.now()
             legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",
                 (mid,kind2,"completed",legacy.dumps({"prompt":message}),legacy.dumps(result),"native",t,t))
-            out={"request_id":request_id,"state":"Complete","intent":"media","media_job_id":mid,
+            out={"request_id":request_id,"state":"Complete","intent":"media","plan":plan,"media_job_id":mid,
                  "status":"completed","provider":"native","result":result}
         elif intent=="workflow":
             adv=_advanced()
@@ -189,7 +187,7 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
                 raise PermissionError("Workflow execution denied by permission policy")
             result=await legacy.run_workflow_internal(str(target),args or {})
             if not _verified(result): raise RuntimeError("Workflow verification failed")
-            out={"request_id":request_id,"state":"Complete","intent":"workflow","target":target,"result":result}
+            out={"request_id":request_id,"state":"Complete","intent":"workflow","target":target,"plan":plan,"result":result}
         elif intent=="automation":
             adv=_advanced()
             if not adv: raise RuntimeError("Automation engine unavailable")
@@ -207,18 +205,18 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
                            (sid,"RAYONE reminder","interval",str(seconds),"chat",legacy.dumps({"message":text}),
                             1,t+seconds,None,t,t))
             result={"schedule_id":sid,"interval_seconds":seconds,"message":text,"verified":True}
-            out={"request_id":request_id,"state":"Complete","intent":"automation","result":result}
+            out={"request_id":request_id,"state":"Complete","intent":"automation","plan":plan,"result":result}
         elif intent in {"knowledge","devops"}:
             from .native_engines import native_search
             result=native_search(message,10)
             if not _verified(result): raise RuntimeError("Workspace search verification failed")
             out={"request_id":request_id,"state":"Complete","intent":intent,"result":result}
         elif intent=="chat":
-            result=await _chat(message,model_id)
-            out={"request_id":request_id,"state":"Complete","intent":"chat",**result}
+            result=await _chat(message,model_id,intent)
+            out={"request_id":request_id,"state":"Complete","intent":"chat","plan":plan,**result}
         else:
-            result=await _chat(message,model_id)
-            out={"request_id":request_id,"state":"Complete","intent":intent,**result}
+            result=await _chat(message,model_id,intent)
+            out={"request_id":request_id,"state":"Complete","intent":intent,"plan":plan,**result}
         _trace(request_id,"Verifying",{"verified":True})
         _save(request_id,"Verifying",result=out)
         _save(request_id,"Complete",result=out)
