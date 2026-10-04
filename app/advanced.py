@@ -196,6 +196,7 @@ def _auto_memory(message, answer, conversation_id):
 async def assistant_run(x):
     rid=str(uuid.uuid4()); metric("assistant.requests")
     cid=_conversation_turn(x,rid)
+    x.conversation_id=cid
     trace("Idle",rid)
     trace("Understanding",rid,{"message":x.message})
     intent=classify(x.message)
