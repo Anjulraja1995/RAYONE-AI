@@ -590,7 +590,7 @@ def local_media_probe(payload:dict,_:str=Depends(auth)):
     file_id=str(payload.get("file_id",""))
     row=legacy.one("select path from workspace_files where id=?",(file_id,))
     if not row: raise HTTPException(404,"File not found")
-    return media_probe(row["path"])
+    result = media_probe(row["path"])\n    result["adapter"] = "local-media-probe"\n    return result
 
 @router.get("/research/search")
 async def web_search(q:str,limit:int=5,_:str=Depends(auth)):
