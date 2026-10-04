@@ -106,6 +106,36 @@ def traces(limit:int=200,_:str=Depends(auth)):
 def metrics(_:str=Depends(auth)):
     return legacy.rows("select * from metrics_v2 order by key")
 
+@router.get("/capabilities")
+def capabilities(_:str=Depends(auth)):
+    return {"v2": {
+        "provider_failover": True,
+        "permissions": True,
+        "approvals": True,
+        "automation": True,
+        "workspace": True,
+        "memory": True,
+        "research": True,
+        "agents": True,
+        "media": True,
+        "connectors": True,
+        "backup": True,
+        "vorqyon": True,
+        "unified_execution": True,
+        "native_first": True,
+    }, "local_capabilities": TOTAL_CAPABILITIES}
+
+@router.get("/workspace/stats")
+def workspace_stats(_:str=Depends(auth)):
+    rows=legacy.rows("select size from workspace_files")
+    return {"files":len(rows),"bytes":sum(int(x.get("size") or 0) for x in rows),"media_jobs":legacy.rows("select count(*) n from media_jobs")[0]["n"]}
+
+@router.get("/backup/export")
+def backup_export(_:str=Depends(auth)):
+    tables=["projects","providers","models","tools","agents","workflows","memories","jobs","events","audits","checkpoints","secrets","settings",
+            "traces","approvals","permissions","schedules","workspace_files","media_jobs","connectors","metrics_v2","memory_index","conversations","messages"]
+    return {"created":legacy.now(),"tables":{t:legacy.rows("select * from "+t) for t in tables}}
+
 @router.get("/permissions")
 def permissions(_:str=Depends(auth)):
     return legacy.rows("select * from permissions order by subject,capability")
@@ -125,7 +155,6 @@ def delete_permission(id:str,_:str=Depends(auth)):
 def approvals(_:str=Depends(auth)):
     return legacy.rows("select * from approvals order by created desc limit 200")
 
-@router.post("/approvals/{id}")
 def _verify_result(result, expected=None):
     ok=result is not None
     if isinstance(result,dict):
@@ -135,6 +164,7 @@ def _verify_result(result, expected=None):
     if expected is not None and ok: ok=(result==expected)
     return {"ok":bool(ok),"expected":expected,"result_present":result is not None}
 
+@router.post("/approvals/{id}")
 async def decide_approval(id:str,x:ApprovalIn,_:str=Depends(auth)):
     if x.decision not in {"approved","rejected"}: raise HTTPException(400,"decision must be approved or rejected")
     item=legacy.one("select * from approvals where id=?",(id,))
@@ -182,8 +212,8 @@ def classify(message):
 async def research(url_or_query):
     from .native_engines import research as native_research
     return native_research(url_or_query, max_sources=5)
-def _conversation_turn(x, rid, answer="", provider="", append_user=True):
-    cid=x.conversation_id
+def _conversation_turn(x, rid, answer="", provider="", append_user=True, conversation_id=None):
+    cid=conversation_id if conversation_id is not None else x.conversation_id
     if cid and not legacy.one("select id from conversations where id=?",(cid,)): cid=None
     if not cid:
         cid=str(uuid.uuid4()); t=legacy.now()
@@ -229,7 +259,7 @@ async def assistant_run(x):
         if answer is not None:
             try:
                 cid=cid or _conversation_turn(x,result["request_id"],"", "", True)
-                _conversation_turn(x,result["request_id"],answer,result.get("provider","local"),False)
+                _conversation_turn(x,result["request_id"],answer,result.get("provider","local"),False,conversation_id=cid)
                 _auto_memory(x.message,str(answer),cid)
                 result["conversation_id"]=cid
             except Exception:
