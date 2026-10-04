@@ -91,17 +91,22 @@ def _native_media(kind,prompt):
 
 async def _chat(message,model_id=None):
     legacy=_legacy()
-    # A configured provider is an optional adapter; local execution remains the terminal fallback.
+    adv=_advanced()
     try:
-        answer,provider=await legacy.provider_chat(message,model_id)
-        if answer: return {"answer":answer,"provider":provider or "provider","native":False}
-    except Exception as e:
+        if adv and hasattr(adv,"_provider_failover"):
+            answer,provider,failures=await adv._provider_failover(message,model_id)
+        else:
+            answer,provider=await legacy.provider_chat(message,model_id)
+            failures=0
+        if answer:
+            return {"answer":answer,"provider":provider or "provider","native":False,"provider_failures":failures}
+    except Exception:
         try: legacy.metric("provider.failures")
         except Exception: pass
     mem=legacy.rows("select content from memories where content like ? order by created desc limit 5",(f"%{message[:40]}%",))
     answer="RAYONE local core received: "+message
     if mem: answer+="\nRelevant memory: "+" ".join(m["content"] for m in mem)
-    return {"answer":answer,"provider":"local","native":True}
+    return {"answer":answer,"provider":"local","native":True,"provider_failures":0}
 
 async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_approval=False,
                        target=None,args=None,kind=None,request_id=None,subject="admin"):
