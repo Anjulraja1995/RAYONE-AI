@@ -25,3 +25,6 @@ def test_native_engines():
     assert bad.status_code==200 and not bad.json()["syntax_ok"]
     w=client.post("/api/v2/native/workflow/plan",headers=h,json={"steps":[{"type":"set","key":"name","value":"RAYONE"},{"type":"transform","key":"name","operation":"lower"}]})
     assert w.status_code==200 and w.json()["data"]["name"]=="rayone"
+
+    t2=client.post("/api/v2/tools/run",headers=h,json={"name":"local.advanced_native.code_analyze","args":{"source":"x=1"}})
+    assert t2.status_code==200 and t2.json()["result"]["syntax_ok"]
