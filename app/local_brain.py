@@ -45,7 +45,7 @@ def is_capability_question(message: str) -> bool:
     m=str(message or "").strip().lower()
     if not m: return False
     question = "?" in m or any(x in m for x in ("can you","could you","are you able","do you support","क्या तुम","क्या आप","कर सकते हो","कर सकती हो","बना सकते","बना सकती","bana sakte ho","bana sakti ho","kar sakte ho","kar sakti ho","can bana","can make"))
-    action = any(x in m for x in ("make","create","generate","build","बन","तैयार"))
+    action = any(x in m for x in ("make","create","generate","build","bana","banao","बन","तैयार"))
     return bool(question and action)
 
 def is_status_followup(message: str) -> bool:
