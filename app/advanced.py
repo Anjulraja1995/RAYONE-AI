@@ -241,11 +241,23 @@ async def assistant_run(x):
         return {"request_id":rid,"state":"Complete","intent":intent,"result":result,"conversation_id":cid}
     if intent=="media":
         trace("Executing",rid,{"media":True})
+        low=x.message.lower()
+        if "video" in low:
+            kind="video"
+        elif "music" in low:
+            kind="music"
+        elif "audio" in low:
+            kind="audio"
+        elif "voice" in low or "tts" in low or "speech" in low:
+            kind="voice"
+        else:
+            kind="image"
+        result=legacy.BUILTIN_PACK[kind]["generate"]({"prompt":x.message})
         mid=str(uuid.uuid4()); t=legacy.now()
         legacy.execute("insert into media_jobs values(?,?,?,?,?,?,?,?)",(mid,kind,"completed",legacy.dumps({"prompt":x.message}),legacy.dumps(result),"native",t,t))
-        trace("Verifying",rid,{"media_job_id":mid})
+        trace("Verifying",rid,{"media_job_id":mid,"native":True})
         trace("Complete",rid)
-        msg=f"Native {kind} artifact generated."; _conversation_turn(x,rid,msg,"media",False); _auto_memory(x.message,msg,cid)
+        msg=f"Native {kind} artifact generated."; _conversation_turn(x,rid,msg,"native",False); _auto_memory(x.message,msg,cid)
         return {"request_id":rid,"state":"Complete","intent":intent,"media_job_id":mid,"status":"completed","provider":"native","result":result,"message":msg,"conversation_id":cid}
     trace("Executing",rid)
     answer,provider=await legacy.provider_chat(x.message,x.model_id)
