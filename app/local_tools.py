@@ -1228,7 +1228,7 @@ FAMILIES = {
         "thumbnail_label"
     ]
 }
-TOTAL_CAPABILITIES = 1146
+TOTAL_CAPABILITIES = 1138
 
 def _value(a):
     for k in ("value","text","input","items","values"):
