@@ -244,91 +244,10 @@ def calc(expr):
     return v
 
 # Built-in zero-cost tool pack. Every entry below is locally executable and has no paid-service dependency.
-def _builtin_tool_catalog():
-    return {
-        "text": {
-            "lower": lambda a: str(a.get("text","")).lower(),
-            "upper": lambda a: str(a.get("text","")).upper(),
-            "title": lambda a: str(a.get("text","")).title(),
-            "trim": lambda a: str(a.get("text","")).strip(),
-            "reverse": lambda a: str(a.get("text",""))[::-1],
-            "length": lambda a: len(str(a.get("text",""))),
-            "words": lambda a: len(str(a.get("text","")).split()),
-            "lines": lambda a: len(str(a.get("text","")).splitlines()),
-            "split": lambda a: str(a.get("text","")).split(str(a.get("separator"," "))),
-            "join": lambda a: str(a.get("separator","")).join(map(str,a.get("items",[]))),
-            "replace": lambda a: str(a.get("text","")).replace(str(a.get("old","")),str(a.get("new",""))),
-            "count": lambda a: str(a.get("text","")).count(str(a.get("needle",""))),
-            "contains": lambda a: str(a.get("needle","")) in str(a.get("text","")),
-            "starts_with": lambda a: str(a.get("text","")).startswith(str(a.get("prefix",""))),
-            "ends_with": lambda a: str(a.get("text","")).endswith(str(a.get("suffix",""))),
-            "slug": lambda a: re.sub(r"[^a-z0-9]+","-",str(a.get("text","")).lower()).strip("-"),
-            "lines_unique": lambda a: list(dict.fromkeys(str(a.get("text","")).splitlines())),
-        },
-        "math": {
-            "sum": lambda a: sum(float(x) for x in a.get("values",[])),
-            "average": lambda a: (sum(float(x) for x in a.get("values",[]))/len(a.get("values",[]))) if a.get("values") else 0,
-            "min": lambda a: min(a.get("values",[])),
-            "max": lambda a: max(a.get("values",[])),
-            "abs": lambda a: abs(float(a.get("value",0))),
-            "round": lambda a: round(float(a.get("value",0)),int(a.get("digits",0))),
-            "power": lambda a: float(a.get("base",0)) ** float(a.get("exponent",0)),
-            "sqrt": lambda a: math.sqrt(float(a.get("value",0))),
-            "percent": lambda a: float(a.get("value",0))*float(a.get("rate",0))/100,
-            "clamp": lambda a: max(float(a.get("minimum",0)),min(float(a.get("maximum",1)),float(a.get("value",0)))),
-            "statistics": lambda a: {"count":len(a.get("values",[])),"sum":sum(float(x) for x in a.get("values",[])),"min":min(a.get("values",[])) if a.get("values") else None,"max":max(a.get("values",[])) if a.get("values") else None},
-        },
-        "json": {
-            "parse": lambda a: json.loads(str(a.get("value","{}"))),
-            "stringify": lambda a: dumps(a.get("value",{})),
-            "keys": lambda a: list((a.get("value") or {}).keys()),
-            "values": lambda a: list((a.get("value") or {}).values()),
-            "get": lambda a: (a.get("value") or {}).get(a.get("key")),
-            "merge": lambda a: {**(a.get("left") or {}),**(a.get("right") or {})},
-        },
-        "encoding": {
-            "base64_encode": lambda a: base64.b64encode(str(a.get("text","")).encode()).decode(),
-            "base64_decode": lambda a: base64.b64decode(str(a.get("text",""))).decode(),
-            "url_quote": lambda a: __import__("urllib.parse").parse.quote(str(a.get("text",""))),
-            "url_unquote": lambda a: __import__("urllib.parse").parse.unquote(str(a.get("text",""))),
-        },
-        "crypto": {
-            "sha256": lambda a: hashlib.sha256(str(a.get("text","")).encode()).hexdigest(),
-            "sha1": lambda a: hashlib.sha1(str(a.get("text","")).encode()).hexdigest(),
-            "md5": lambda a: hashlib.md5(str(a.get("text","")).encode()).hexdigest(),
-            "hmac_sha256": lambda a: __import__("hmac").new(str(a.get("key","")).encode(),str(a.get("text","")).encode(),hashlib.sha256).hexdigest(),
-            "uuid": lambda a: str(uuid.uuid4()),
-        },
-        "regex": {
-            "findall": lambda a: re.findall(str(a.get("pattern","")),str(a.get("text",""))),
-            "search": lambda a: bool(re.search(str(a.get("pattern","")),str(a.get("text","")))),
-            "replace": lambda a: re.sub(str(a.get("pattern","")),str(a.get("replacement","")),str(a.get("text",""))),
-            "split": lambda a: re.split(str(a.get("pattern","")),str(a.get("text",""))),
-        },
-        "datetime": {
-            "unix": lambda a: time.time(),
-            "iso": lambda a: time.strftime("%Y-%m-%dT%H:%M:%SZ",time.gmtime()),
-            "date": lambda a: time.strftime("%Y-%m-%d",time.localtime()),
-            "time": lambda a: time.strftime("%H:%M:%S",time.localtime()),
-            "weekday": lambda a: time.strftime("%A",time.localtime()),
-            "timestamp_from_text": lambda a: __import__("datetime").datetime.fromisoformat(str(a.get("value","")).replace("Z","+00:00")).timestamp(),
-        },
-        "list": {
-            "unique": lambda a: list(dict.fromkeys(a.get("items",[]))),
-            "reverse": lambda a: list(reversed(a.get("items",[]))),
-            "sort": lambda a: sorted(a.get("items",[]),key=lambda x:str(x)),
-            "take": lambda a: list(a.get("items",[]))[:int(a.get("count",10))],
-            "drop": lambda a: list(a.get("items",[]))[int(a.get("count",0)):],
-            "flatten": lambda a: [y for x in a.get("items",[]) for y in (x if isinstance(x,list) else [x])],
-        },
-        "planning": {
-            "checklist": lambda a: [{"id":i+1,"task":str(x),"status":"pending"} for i,x in enumerate(a.get("tasks",[]))],
-            "sequence": lambda a: {"goal":a.get("goal",""),"steps":[str(x) for x in a.get("steps",[])],"count":len(a.get("steps",[]))},
-            "priority_sort": lambda a: sorted(a.get("items",[]),key=lambda x:float((x or {}).get("priority",0)),reverse=True),
-        },
-    }
+from .local_tools import build_builtin_pack, TOTAL_CAPABILITIES
 
-BUILTIN_PACK = _builtin_tool_catalog()
+BUILTIN_PACK = build_builtin_pack()
+
 
 def register_builtin_pack():
     t=now()
