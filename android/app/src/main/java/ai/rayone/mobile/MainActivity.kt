@@ -16,6 +16,8 @@ import org.json.JSONObject
 class MainActivity : AppCompatActivity() {
     private val baseUrl = "http://10.0.2.2:8000"
     private var token = ""
+    private var conversationId = ""
+    private lateinit var prefs: android.content.SharedPreferences
     private var tts: TextToSpeech? = null
     private var recognizer: SpeechRecognizer? = null
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -36,6 +38,10 @@ class MainActivity : AppCompatActivity() {
                 override fun onReadyForSpeech(p:android.os.Bundle?){}; override fun onBeginningOfSpeech(){}; override fun onRmsChanged(v:Float){}; override fun onBufferReceived(b:ByteArray?){}; override fun onEndOfSpeech(){}; override fun onPartialResults(b:android.os.Bundle?){}; override fun onEvent(t:Int,b:android.os.Bundle?){ }
             }); recognizer?.startListening(intent)
         }
+        prefs=getSharedPreferences("rayone", MODE_PRIVATE)
+        conversationId=prefs.getString("conversation_id","") ?: ""
+        if(conversationId.isBlank()) conversationId=java.util.UUID.randomUUID().toString()
+        prefs.edit().putString("conversation_id",conversationId).apply()
         setContentView(root)
         tts=TextToSpeech(this){ if(it==TextToSpeech.SUCCESS) tts?.language=Locale.getDefault() }
         recognizer=SpeechRecognizer.createSpeechRecognizer(this)
@@ -52,9 +58,12 @@ class MainActivity : AppCompatActivity() {
         run.setOnClickListener {
             thread {
                 try {
-                    val body=JSONObject().put("message",message.text.toString()).toString()
+                    val body=JSONObject().put("message",message.text.toString()).put("conversation_id",conversationId).put("request_id",java.util.UUID.randomUUID().toString()).toString()
                     val r=request("/api/v2/assistant/chat","POST",body)
-                    runOnUiThread { val answer=JSONObject(r).optString("answer",r); output.text=answer; if(answer.isNotBlank()) tts?.speak(answer,TextToSpeech.QUEUE_FLUSH,null,"rayone") }
+                    val response=JSONObject(r)
+                    conversationId=response.optString("conversation_id",conversationId)
+                    prefs.edit().putString("conversation_id",conversationId).apply()
+                    runOnUiThread { val answer=response.optString("answer",r); output.text=answer; if(answer.isNotBlank()) tts?.speak(answer,TextToSpeech.QUEUE_FLUSH,null,"rayone") }
                 } catch(e:Exception){ runOnUiThread { output.text=e.message } }
             }
         }
