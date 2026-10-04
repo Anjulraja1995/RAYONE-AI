@@ -158,3 +158,16 @@ def test_local_media_probe_endpoint():
     fid=r.json()['id']
     p=client.post('/api/v2/local/media/probe',headers={**hh,'Content-Type':'application/json'},json={'file_id':fid})
     assert p.status_code==200 and p.json()['adapter']=='local-media-probe'
+
+
+def test_vorqyon_approval_gate_executes_after_approval():
+    t=token(); hh=h(t)
+    r=client.post('/api/v2/vorqyon/execute',headers={**hh,'Content-Type':'application/json'},json={
+        'mode':'tool','target':'local.math.sum','args':{'values':[4,5]},'expected':9,'require_approval':True
+    })
+    assert r.status_code==200 and r.json()['state']=='Awaiting Approval'
+    aid=r.json()['approval_id']
+    d=client.post('/api/v2/approvals/'+aid,headers={**hh,'Content-Type':'application/json'},json={'decision':'approved'})
+    assert d.status_code==200 and d.json()['status']=='approved'
+    assert d.json()['result']['execution']==9
+    assert d.json()['result']['verification']['ok'] is True
