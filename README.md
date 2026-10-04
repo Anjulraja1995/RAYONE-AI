@@ -78,6 +78,7 @@ The v2 layer provides:
 - connector registry
 - web research/search adapter
 - optional GitHub repository adapter using `GITHUB_TOKEN`
+- local browser fetch/text extraction, OCR adapter and media metadata probe
 - diagnostics, metrics and observability endpoints
 - responsive universal command-center dashboard
 
