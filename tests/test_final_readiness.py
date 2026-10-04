@@ -112,3 +112,20 @@ def test_natural_local_pack_routing():
         assert r.status_code==200, r.text
         d=r.json(); assert d.get("state")=="Complete", d
         if expected: assert str(d.get("result"))==expected or str(d.get("result")).startswith(expected)
+
+
+def test_extended_native_capability_execution():
+    h=login()
+    cases=[
+        ("local.finance.discount",{"value":1000,"rate":20},800),
+        ("local.geometry.circle_area",{"radius":2},12.566370614359172),
+        ("local.colors.normalize_hex",{"value":"#abc"},"#aabbcc"),
+        ("local.datetime.is_leap_year",{"year":2024},True),
+        ("local.files.extension",{"value":"report.pdf"},"pdf"),
+    ]
+    for name,args,expected in cases:
+        r=client.post("/api/v2/tools/run",headers=h,json={"name":name,"args":args})
+        assert r.status_code==200, (name,r.text)
+        d=r.json()
+        assert d.get("state")=="Complete", d
+        assert d.get("result")==expected
