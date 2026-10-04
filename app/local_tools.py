@@ -9,6 +9,7 @@ from datetime import datetime, timezone, timedelta
 
 FAMILIES = {
     "web": ["fetch","search","extract_text","parse_url"],
+    "advanced_native": ["research","document","csv_analyze","code_analyze","workflow_plan","workspace_search","ocr","media_probe"],
     "translation": ["local"],
     "documents": ["metadata","extract_text"],
     "media_native": ["probe"],
@@ -1235,6 +1236,18 @@ def _value(a):
     return ""
 
 def execute_local(family, op, a):
+    if family=="advanced_native":
+        from .native_engines import native_search, research as native_research, _document_extract, _csv_analyze, code_analyze, workflow_plan, _safe_workspace_path
+        if op=="workspace_search": return native_search(a.get("query",a.get("value","")),a.get("limit",10))
+        if op=="research":
+            import asyncio
+            return asyncio.run(native_research(a.get("query",a.get("value","")),a.get("max_sources",5)))
+        if op=="document": return _document_extract(a.get("path",a.get("value","")))
+        if op=="csv_analyze": return _csv_analyze(str(a.get("text",a.get("value",""))))
+        if op=="code_analyze": return code_analyze(a.get("source",a.get("value","")),a.get("language","python"))
+        if op=="workflow_plan": return workflow_plan(a.get("steps",[]),a.get("input",{}),a.get("max_steps",50))
+        if op=="media_probe": return __import__("app.local_adapters",fromlist=["media_probe"]).media_probe(_safe_workspace_path(a.get("path",a.get("value",""))))
+        if op=="ocr": return __import__("app.local_adapters",fromlist=["ocr_image"]).ocr_image(_safe_workspace_path(a.get("path",a.get("value",""))))
     if family=="documents":
         if op=="metadata":
             name=str(a.get("name",a.get("value","")))
