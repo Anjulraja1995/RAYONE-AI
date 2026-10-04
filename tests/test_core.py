@@ -199,3 +199,38 @@ def test_native_media_job_completes_without_provider():
     assert data["status"]=="completed"
     assert data["provider"]=="native"
     assert data["result"]["native"] is True
+
+
+def test_auth_rejects_wrong_password_and_protected_requests():
+    bad=client.post('/api/auth/login',json={'password':'definitely-wrong'})
+    assert bad.status_code==401
+    missing=client.get('/api/summary')
+    assert missing.status_code==401
+    malformed=client.get('/api/summary',headers={'Authorization':'Bearer invalid-token'})
+    assert malformed.status_code==401
+
+
+def test_logout_revokes_session():
+    t=token(); hh=h(t)
+    assert client.get('/api/summary',headers=hh).status_code==200
+    out=client.post('/api/auth/logout',headers=hh)
+    assert out.status_code==200 and out.json()['ok'] is True
+    assert client.get('/api/summary',headers=hh).status_code==401
+
+
+def test_expired_session_is_rejected():
+    import time
+    t=token(); hh=h(t)
+    from app.main import execute
+    execute("update sessions set expires=? where token=?", (time.time()-1, t))
+    assert client.get('/api/summary',headers=hh).status_code==401
+
+
+def test_core_health_reports_local_control_plane():
+    r=client.get('/api/health')
+    data=r.json()
+    assert r.status_code==200
+    assert data['ok'] is True
+    assert data['name']=='RAYONE AI'
+    assert data['database']=='sqlite'
+    assert data['mode']=='free-local-first'
