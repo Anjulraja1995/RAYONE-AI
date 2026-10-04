@@ -41,18 +41,36 @@ def classify(message: str, conversation_context: str = "") -> str:
         return "planning"
     return "chat"
 
-def resolve_followup(message: str, context: list[dict] | None = None) -> dict[str, str]:
+def is_capability_question(message: str) -> bool:
+    m=str(message or "").strip().lower()
+    if not m: return False
+    question = "?" in m or any(x in m for x in ("can you","could you","are you able","do you support","क्या तुम","क्या आप","कर सकते हो","कर सकती हो","बना सकते","बना सकती"))
+    action = any(x in m for x in ("make","create","generate","build","बन","तैयार"))
+    return bool(question and action)
+
+def is_status_followup(message: str) -> bool:
+    m=str(message or "").strip().lower()
+    return m in {"ky hua","kya hua","status","update","what happened","what's happening","क्या हुआ","स्टेटस","अपडेट","हुआ क्या"}
+
+def is_execute_followup(message: str) -> bool:
+    m=str(message or "").strip().lower()
+    return bool(re.match(r"^(banao|banाओ|create it|make it|do it|go ahead|ok|okay|complete|complete it|yes|haan|ha|करो|बनाओ|बना दो|ठीक है|कम्प्लीट करो|कर दो|हाँ|हां)\b",m))
+
+def resolve_followup(message: str, context: list[dict] | None = None, pending: dict | None = None) -> dict[str, str]:
     msg=str(message or "").strip()
-    recent=" ".join(str(x.get("content","")) for x in (context or [])[-6:])
-    low=msg.lower()
-    if recent and re.match(r"^(banao|banाओ|create it|make it|do it|go ahead|ok|okay|complete|complete it|yes|haan|ha|करो|बनाओ|बना दो|ठीक है|कम्प्लीट करो|कर दो)\b",low):
-        prior=recent
-        if _has(prior,"image","photo","nature","इमेज","फोटो","चित्र"):
-            return {"intent":"media","kind":"image","message":"Create the requested image described in the previous conversation: "+prior[-2500:]}
-        if _has(prior,"video","reel","वीडियो","रील"):
-            return {"intent":"media","kind":"video","message":"Create the requested video described in the previous conversation: "+prior[-2500:]}
-        if _has(prior,"music","song","गाना","म्यूजिक"):
-            return {"intent":"media","kind":"music","message":"Create the requested music described in the previous conversation: "+prior[-2500:]}
+    if is_status_followup(msg):
+        return {"intent":"status","kind":"status","message":msg}
+    if pending and is_execute_followup(msg):
+        return {"intent":pending.get("intent","chat"),"kind":pending.get("kind",pending.get("intent","chat")),
+                "message":pending.get("message",""),"execute_pending":"true"}
+    recent=" ".join(str(x.get("content","")) for x in (context or [])[-8:])
+    if recent and is_execute_followup(msg):
+        if _has(recent,"image","photo","nature","इमेज","फोटो","चित्र"):
+            return {"intent":"media","kind":"image","message":"Create the requested image described in the previous conversation: "+recent[-2500:]}
+        if _has(recent,"video","reel","वीडियो","रील"):
+            return {"intent":"media","kind":"video","message":"Create the requested video described in the previous conversation: "+recent[-2500:]}
+        if _has(recent,"music","song","गाना","म्यूजिक"):
+            return {"intent":"media","kind":"music","message":"Create the requested music described in the previous conversation: "+recent[-2500:]}
     return {"intent":classify(msg),"kind":classify(msg),"message":msg}
 
 def calculator_expression(message: str) -> str:
@@ -92,6 +110,10 @@ def local_response(message: str, intent: str) -> str:
         return "नमस्ते! मैं RAYONE हूँ। आप मुझसे calculation, planning, research, files, media creation, automation और दूसरे उपलब्ध tasks सीधे कर सकते हैं।"
     if _has(low,"who are you","what are you","तुम कौन","आप कौन"):
         return "मैं RAYONE AI हूँ — local-first universal assistant. मैं request को समझकर capability चुनता हूँ, execute करता हूँ, verify करता हूँ और result लौटाता हूँ।"
+    if is_capability_question(msg):
+        if hi:
+            return "हाँ, कर सकता हूँ। जब आप कहेंगे, मैं इसी request को actual execute करूँगा और result दूँगा।"
+        return "Yes, I can do that. When you tell me to proceed, I will execute this request and return the actual result."
     if _has(low,"what can you do","capabilities","क्या कर सकते","क्या क्या कर"):
         return "मैं research, calculations, planning, files/documents, code/repository tasks, automation, image/design/video/audio/music/voice generation और registered tools चला सकता हूँ। External AI providers configured हों तो open-ended AI conversation भी उन्हीं के जरिए चलती है।"
     if intent=="planning":
