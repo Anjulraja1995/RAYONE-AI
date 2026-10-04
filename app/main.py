@@ -355,20 +355,40 @@ async def execute_tool(x:ToolCall,_:str=Depends(auth)):
     return {"ok":True,"tool":x.name,"result":result.get("result"),"request_id":result.get("request_id"),"state":result.get("state")}
 
 async def provider_chat(message, model_id=None):
+    """Route chat through configured providers with ordered failover.
+    No provider is mandatory: execution_pipeline supplies the local fallback.
+    """
+    from .provider_adapters import chat as adapter_chat, ProviderError
+    candidates=[]
     if model_id:
-        m=one("select * from models where id=? and enabled=1",(model_id,));p=one("select * from providers where id=? and enabled=1",(m["provider_id"],)) if m else None
+        m=one("select * from models where id=? and enabled=1",(model_id,))
+        p=one("select * from providers where id=? and enabled=1",(m["provider_id"],)) if m else None
+        if m and p: candidates=[(p,m)]
     else:
-        m=one("select * from models where enabled=1 order by rowid limit 1");p=one("select * from providers where id=? and enabled=1",(m["provider_id"],)) if m else one("select * from providers where enabled=1 and base_url<>'' order by rowid limit 1")
-    if not p or not p["base_url"]:return None,None
-    cfg=json.loads(p["config"] or "{}"); token=""
-    if cfg.get("api_key"):
-        try:token=FERNET.decrypt(cfg["api_key"].encode()).decode()
-        except InvalidToken:token=""
-    model=(m["model"] if m else cfg.get("model","default"))
-    url=p["base_url"].rstrip("/")+"/chat/completions"
-    headers={"Authorization":f"Bearer {token}"} if token else {}
-    async with httpx.AsyncClient(timeout=45) as client:
-        r=await client.post(url,headers=headers,json={"model":model,"messages":[{"role":"user","content":message}]});r.raise_for_status();d=r.json();return d["choices"][0]["message"]["content"],p["name"]
+        rows_cfg=rows("""select p.*,m.id as model_id,m.model as selected_model
+                         from providers p left join models m
+                         on m.provider_id=p.id and m.enabled=1
+                         where p.enabled=1 order by p.rowid,m.rowid""")
+        for p0 in rows_cfg:
+            m0={"model":p0.get("selected_model") or json.loads(p0["config"] or "{}").get("model","")}
+            candidates.append((p0,m0))
+    attempts=[]
+    for p,m in candidates:
+        if not p.get("base_url"): continue
+        cfg=json.loads(p["config"] or "{}"); token=""
+        if cfg.get("api_key"):
+            try: token=FERNET.decrypt(cfg["api_key"].encode()).decode()
+            except InvalidToken: token=""
+        model=m.get("model") or cfg.get("model","")
+        try:
+            answer=await adapter_chat(p["base_url"],p.get("kind","openai_compatible"),model,message,token)
+            emit("provider.completed",{"provider":p["name"],"model":model})
+            return answer,p["name"]
+        except Exception as ex:
+            attempts.append({"provider":p["name"],"error":str(ex)})
+            audit("provider.failover","provider",{"name":p["name"],"error":str(ex)})
+            continue
+    return None,None
 
 @app.post("/api/chat")
 async def chat(x:Chat,_:str=Depends(auth)):
@@ -525,7 +545,7 @@ async def startup():asyncio.create_task(worker_loop())
 from .advanced import router as advanced_router, scheduler_loop
 from .native_engines import router as native_engines_router
 app.include_router(advanced_router)
-app.include_router(native_engines_router)
+app.include_router(native_engines_router)\nfrom .production_routes import router as production_router\napp.include_router(production_router)
 
 @app.on_event("startup")
 async def advanced_startup():
