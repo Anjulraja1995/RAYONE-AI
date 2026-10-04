@@ -41,3 +41,17 @@ def test_logout_is_audited_and_revokes_session():
     r = client.post("/api/auth/logout", headers=headers(data["token"]))
     assert r.status_code == 200
     assert client.get("/api/auth/session", headers=headers(data["token"])).status_code == 401
+
+def test_health_reports_database_integrity():
+    r = client.get("/api/health")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["database"] == "sqlite"
+    assert body["database_integrity"] is True
+    assert body["active_sessions"] >= 0
+
+def test_invalid_session_is_rejected_and_removed():
+    fake = "not-a-valid-session"
+    r = client.get("/api/auth/session", headers=headers(fake))
+    assert r.status_code == 401
