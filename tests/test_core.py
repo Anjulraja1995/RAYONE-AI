@@ -171,3 +171,21 @@ def test_vorqyon_approval_gate_executes_after_approval():
     assert d.status_code==200 and d.json()['status']=='approved'
     assert d.json()['result']['execution']==9
     assert d.json()['result']['verification']['ok'] is True
+
+def test_native_creative_tools_execute(tmp_path):
+    t=token(); hh=h(t)
+    for name, marker in [
+        ("local.image.generate", "image/svg+xml"),
+        ("local.design.generate", "image/svg+xml"),
+        ("local.audio.generate", "audio/wav"),
+        ("local.music.generate", "audio/wav"),
+        ("local.voice.generate", "audio/wav"),
+        ("local.video.generate", "image/svg+xml"),
+    ]:
+        r=client.post("/api/v2/tools/run",headers={**hh,"Content-Type":"application/json"},
+                      json={"name":name,"args":{"prompt":"RAYONE native test"}})
+        assert r.status_code==200, r.text
+        data=r.json()["result"]
+        assert data["native"] is True
+        assert data["mime"]==marker
+        assert data["size"]>0
