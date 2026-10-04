@@ -192,9 +192,13 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
 async def execute_approved(payload):
     payload=dict(payload or {})
     payload["require_approval"]=False
+    request_id=payload.get("request_id")
+    if request_id:
+        ensure_store()
+        _save(request_id,"Queued")
     return await run_pipeline(message=str(payload.get("message","")),model_id=payload.get("model_id"),
         conversation_id=payload.get("conversation_id"),target=payload.get("target"),args=payload.get("args") or {},
-        kind=payload.get("kind"),request_id=payload.get("request_id"))
+        kind=payload.get("kind"),request_id=request_id)
 
 def state_snapshot(request_id):
     ensure_store(); r=_row(request_id)
