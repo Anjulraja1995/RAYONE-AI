@@ -119,3 +119,20 @@ RAYONE exposes real adapter contracts for capabilities that require an external 
 A capability is considered implemented only when its UI/control surface, backend contract, execution path, error handling and regression test exist. A connector registration screen alone is not counted as a completed integration.
 
 The workflow module includes a live draft builder, validation endpoint and executable saved workflows. The local tool catalog is available at `/api/v2/tools/catalog` and execution at `/api/v2/tools/run`.
+
+
+## Production completion layer
+
+The production layer is implemented under `/api/v2/production/*`:
+- provider health, model discovery and ordered failover
+- OpenAI-compatible, Ollama and LM Studio-compatible chat adapters
+- credential-gated generic HTTP/REST/webhook connectors
+- approval-gated connector mutations
+- enhanced native creative renderers with aspect-ratio support
+- production hardening/readiness checks
+- all provider and connector credentials remain encrypted/server-side
+- no external provider is treated as active until configured and executable
+
+The native creative engine is intentionally deterministic and zero-cost. It produces
+real inspectable artifacts for pipeline verification; high-quality learned
+generation remains an optional provider adapter rather than a mandatory dependency.
