@@ -531,11 +531,15 @@ async def connectivity(_:str=Depends(auth)):
         results.append({"id":p["id"],"name":p["name"],"ok":ok,"error":err})
     return {"database":True,"providers":results,"tools":len(rows("select id from tools where enabled=1")),"agents":len(rows("select id from agents where enabled=1")),"workflows":len(rows("select id from workflows where enabled=1"))}
 
-HTML=(ROOT / 'app' / 'dashboard.html').read_text(encoding='utf-8')
+HTML=(ROOT / 'app' / 'rayone.html').read_text(encoding='utf-8')
+CONTROL_HTML=(ROOT / 'app' / 'dashboard.html').read_text(encoding='utf-8')
 
 
 @app.get("/",response_class=HTMLResponse)
 def ui():return HTML
+
+@app.get("/control",response_class=HTMLResponse)
+def control_ui():return CONTROL_HTML
 
 @app.on_event("startup")
 async def startup():asyncio.create_task(worker_loop())
