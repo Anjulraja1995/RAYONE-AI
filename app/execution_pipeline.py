@@ -172,9 +172,35 @@ async def run_pipeline(*,message:str,model_id=None,conversation_id=None,require_
             out={"request_id":request_id,"state":"Complete","intent":"media","media_job_id":mid,
                  "status":"completed","provider":"native","result":result}
         elif intent=="workflow":
+            adv=_advanced()
+            if adv and not adv.permission_allows(subject,"workflow.execute",str(target)):
+                raise PermissionError("Workflow execution denied by permission policy")
             result=await legacy.run_workflow_internal(str(target),args or {})
             if not _verified(result): raise RuntimeError("Workflow verification failed")
             out={"request_id":request_id,"state":"Complete","intent":"workflow","target":target,"result":result}
+        elif intent=="automation":
+            adv=_advanced()
+            if not adv: raise RuntimeError("Automation engine unavailable")
+            seconds=3600.0
+            low=message.lower()
+            m=re.search(r"(\d+)\s*(second|minute|hour|day)",low)
+            if m:
+                n=float(m.group(1)); unit=m.group(2)
+                seconds=n*(1 if unit.startswith("second") else 60 if unit.startswith("minute") else 3600 if unit.startswith("hour") else 86400)
+            elif "every hour" in low: seconds=3600.0
+            elif "every day" in low: seconds=86400.0
+            text=re.sub(r"^(please\s+)?(remind me|remind|schedule)\s*(every\s+\d+\s*(second|minute|hour|day)s?|every (hour|day))?\s*(to)?\s*","",message,flags=re.I).strip() or message
+            sid=str(uuid.uuid4()); t=legacy.now()
+            legacy.execute("insert into schedules values(?,?,?,?,?,?,?,?,?,?,?)",
+                           (sid,"RAYONE reminder","interval",str(seconds),"chat",legacy.dumps({"message":text}),
+                            1,t+seconds,None,t,t))
+            result={"schedule_id":sid,"interval_seconds":seconds,"message":text,"verified":True}
+            out={"request_id":request_id,"state":"Complete","intent":"automation","result":result}
+        elif intent in {"knowledge","devops"}:
+            from .native_engines import native_search
+            result=native_search(message,10)
+            if not _verified(result): raise RuntimeError("Workspace search verification failed")
+            out={"request_id":request_id,"state":"Complete","intent":intent,"result":result}
         elif intent=="chat":
             result=await _chat(message,model_id)
             out={"request_id":request_id,"state":"Complete","intent":"chat",**result}
