@@ -113,6 +113,14 @@ def test_expanded_local_capabilities():
         assert r.status_code==200
 
 
+def test_local_adapters_import_and_media_probe(tmp_path):
+    from app.local_adapters import media_probe, extract_text
+    p=tmp_path / "sample.txt"; p.write_text("hello")
+    r=media_probe(p)
+    assert r["name"]=="sample.txt" and r["kind"]=="text"
+    assert extract_text("<p>Hello</p>")=="Hello"
+
+
 def test_workflow_validation():
     t=token(); hh=h(t)
     r=client.post('/api/v2/workflows/validate',headers={**hh,'Content-Type':'application/json'},json={'steps':[{'type':'tool','name':'local.text.upper','args':{'text':'hello'}}]})
