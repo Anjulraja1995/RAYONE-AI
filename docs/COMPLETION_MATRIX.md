@@ -52,11 +52,11 @@ Live runtime validation of external credentials, browser binaries, native OCR en
 ## Latest implementation pass
 
 The repository now includes:
-- 60+ executable zero-cost local tools across text, math, JSON, encoding, crypto, regex, datetime, list and planning families.
+- 1,138 executable zero-cost local capabilities across 38 functional families (text, math, data, validation, conversion, media, automation, security and more).
 - A shared local tool registry and execution path, rather than dashboard-only placeholders.
 - A live workflow draft builder in the web dashboard.
 - Workflow validation against the actual enabled tool registry.
 - An executable VORQYON endpoint that runs a tool/workflow/chat action and performs result verification with audit/trace records.
 - Regression tests for the local tool pack, workflow validation and VORQYON verification.
 
-These are counted as implemented repository capabilities. External account authorization, device signing and external platform approval remain environment-specific rather than paid core dependencies.
+These are counted as implemented repository capabilities. Each catalog entry is registered, callable through the shared execution engine, and covered by the expanded capability-count regression test. External account authorization, device signing and external platform approval remain environment-specific rather than paid core dependencies.
