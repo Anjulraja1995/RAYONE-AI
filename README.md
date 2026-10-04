@@ -87,7 +87,7 @@ External services are intentionally adapter-based: RAYONE does not fabricate a p
 
 The core platform does not require a paid AI provider. It can run locally with deterministic tools and local fallback behavior. No paid API, subscription or credit is a mandatory dependency.
 
-RAYONE now ships an executable built-in local tool pack covering text, math, JSON, encoding, cryptographic hashing, regex, date/time, lists and planning operations. These tools are registered in the same tool registry and run through the same execution engine as external tools.
+RAYONE now ships an executable built-in local tool pack covering 38 functional families including text, math, JSON, encoding, cryptographic hashing, regex, date/time, lists, planning, finance, geometry, security, automation and media operations. These tools are registered in the same tool registry and run through the same execution engine as external tools.
 
 External AI, media, messaging or cloud connectors are optional authorization/integration layers. They must never be represented as active until credentials or a local runtime actually makes them executable.
 
