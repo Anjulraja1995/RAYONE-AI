@@ -256,6 +256,8 @@ BUILTIN_PACK.update({
     "voice": {"generate": generate_voice},
     "video": {"generate": generate_video},
 })
+NATIVE_CREATIVE_CAPABILITIES = 6
+TOTAL_CAPABILITIES = TOTAL_CAPABILITIES + NATIVE_CREATIVE_CAPABILITIES
 
 
 def register_builtin_pack():
