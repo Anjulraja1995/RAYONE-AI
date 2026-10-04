@@ -33,8 +33,37 @@ function hideLogin(){ $("login").classList.add("hidden"); }
 async function doLogin(){let p=$("password").value;if(!p)return;$("loginErr").textContent="";$("loginBtn").classList.add("loading");try{let x=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:p})});let d=await x.json();if(!x.ok)throw Error(d.detail||"Login failed");token=d.token;localStorage.setItem("rayone_token",token);hideLogin();boot()}catch(e){$("loginErr").textContent=e.message}finally{$("loginBtn").classList.remove("loading")}}
 function add(text,who,meta){$("empty")?.remove();let d=document.createElement("div");d.className="msg "+(who==="user"?"user":"ray");d.innerHTML=esc(text)+(meta?'<div class="meta">'+esc(meta)+'</div>':"");$("messages").appendChild(d);$("messages").scrollTop=$("messages").scrollHeight}
 function renderPlan(p){let steps=(p&&p.steps)||[];$("plan").innerHTML=steps.length?steps.map(x=>'<div class="step"><span class="num">'+esc(x.step)+'</span><span>'+esc(x.action)+'</span></div>').join(""):'<div class="stat">No plan returned.</div>'}
-function renderResult(x){let r=x.result;let out=typeof r==="string"?r:JSON.stringify(r||x,null,2);$("result").textContent=out;$("activityList").textContent=JSON.stringify({request_id:x.request_id,state:x.state,intent:x.intent,provider:x.provider,plan:x.plan,result:x.result},null,2);if(r&&r.path){let name=String(r.file||"").replace(/[^A-Za-z0-9._-]/g,"");if(name){let a=document.createElement("a");a.className="btn";a.textContent="Open generated artifact";a.href="/api/native/file/"+encodeURIComponent(name);a.target="_blank";a.style.display="inline-block";a.style.marginTop="10px";$("result").appendChild(document.createElement("br"));$("result").appendChild(a)}}}
-async function sendText(v){if(!v)return;add(v,"user");$("input").value="";$("state").textContent="THINKING";try{let x=await api("/api/v2/assistant/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conversation_id:conversationId,request_id:crypto.randomUUID()})});lastRequest=x.request_id||"";let answer=x.answer||x.message||(typeof x.result==="string"?x.result:JSON.stringify(x.result||x,null,2));add(answer,"ray",(x.intent||"chat")+" · "+(x.provider||"local")+" · "+(x.state||"Complete"));if(x.conversation_id){conversationId=x.conversation_id;localStorage.setItem("rayone_conversation",conversationId)}renderPlan(x.plan);renderResult(x);if(x.result&&x.result.file){const ext=String(x.result.file).split(".").pop().toLowerCase();if(["svg","png","jpg","jpeg","webp"].includes(ext)){const img=document.createElement("img");img.src="/api/native/file/"+encodeURIComponent(x.result.file);img.style.cssText="display:block;max-width:100%;margin-top:12px;border-radius:12px;border:1px solid #203640";img.alt="RAYONE generated result";$("result").appendChild(img)}}$("state").textContent="READY"}catch(e){add("Request failed: "+e.message,"ray","error");$("state").textContent="ERROR"}}
+async function previewArtifact(name,container){
+  if(!name)return;
+  try{
+    const r=await fetch("/api/native/file/"+encodeURIComponent(name),{headers:token?{"Authorization":"Bearer "+token}:{}});
+    if(!r.ok)throw Error("Artifact preview unavailable");
+    const blob=await r.blob(),url=URL.createObjectURL(blob),ext=name.split(".").pop().toLowerCase();
+    if(["svg","png","jpg","jpeg","webp","gif"].includes(ext)){
+      const img=document.createElement("img");img.src=url;img.alt="RAYONE generated result";img.style.cssText="display:block;width:100%;max-height:420px;object-fit:contain;margin-top:12px;border-radius:12px;border:1px solid #203640;background:#071017";container.appendChild(img);
+    }else if(["wav","mp3","ogg","m4a"].includes(ext)){
+      const audio=document.createElement("audio");audio.controls=true;audio.src=url;audio.style.cssText="width:100%;margin-top:12px";container.appendChild(audio);
+    }else if(["mp4","webm","mov"].includes(ext)){
+      const video=document.createElement("video");video.controls=true;video.src=url;video.style.cssText="display:block;width:100%;margin-top:12px;border-radius:12px";container.appendChild(video);
+    }
+  }catch(e){const n=document.createElement("div");n.className="meta";n.textContent=e.message;container.appendChild(n)}
+}
+function renderResult(x){
+  const r=x.result,box=$("result");
+  box.innerHTML="";
+  const media=r&&r.file&&r.path;
+  if(x.intent==="media"&&media){
+    const done=document.createElement("div");done.textContent=x.answer||"Done — your media has been created.";box.appendChild(done);
+    const meta=document.createElement("div");meta.className="meta";meta.textContent=String(r.kind||"media")+" · "+String(r.mime||"artifact");box.appendChild(meta);
+    const link=document.createElement("a");link.className="btn";link.textContent="Open artifact";link.href="/api/native/file/"+encodeURIComponent(r.file);link.target="_blank";link.style.display="inline-block";link.style.marginTop="10px";box.appendChild(link);
+    previewArtifact(r.file,box);
+  }else{
+    const out=typeof r==="string"?r:JSON.stringify(r||x,null,2);box.textContent=out;
+  }
+  $("activityList").textContent=JSON.stringify({request_id:x.request_id,state:x.state,intent:x.intent,provider:x.provider,plan:x.plan,result:x.result},null,2);
+}
+
+async function sendText(v){if(!v)return;add(v,"user");$("input").value="";$("state").textContent="THINKING";try{let x=await api("/api/v2/assistant/chat",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({message:v,conversation_id:conversationId,request_id:crypto.randomUUID()})});lastRequest=x.request_id||"";let answer=x.answer||x.message||(typeof x.result==="string"?x.result:JSON.stringify(x.result||x,null,2));add(answer,"ray",(x.intent||"chat")+" · "+(x.provider||"local")+" · "+(x.state||"Complete"));if(x.conversation_id){conversationId=x.conversation_id;localStorage.setItem("rayone_conversation",conversationId)}renderPlan(x.plan);renderResult(x);$("state").textContent="READY"}catch(e){add("Request failed: "+e.message,"ray","error");$("state").textContent="ERROR"}}
 async function send(){let v=$("input").value.trim();if(v)await sendText(v)}
 function activate(view){document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));$(view+"View").classList.add("active");document.querySelectorAll(".nav button").forEach(x=>x.classList.toggle("active",x.dataset.view===view))}
 document.querySelectorAll(".nav button").forEach(b=>b.onclick=()=>activate(b.dataset.view));
