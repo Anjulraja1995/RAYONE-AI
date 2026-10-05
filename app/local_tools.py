@@ -1468,6 +1468,11 @@ def execute_local(family, op, a):
     if op in ("digits_only","remove_digits"): return "".join(c for c in text if c.isdigit()) if op=="digits_only" else "".join(c for c in text if not c.isdigit())
     if op=="letters_only": return "".join(c for c in text if c.isalpha())
     if op=="alnum_only": return "".join(c for c in text if c.isalnum())
+    if family=="colors" and op=="normalize_hex":
+        h=str(a.get("value",a.get("color",""))).strip().lstrip("#")
+        if len(h)==3: h="".join(ch*2 for ch in h)
+        if len(h) not in (6,8) or any(ch not in "0123456789abcdefABCDEF" for ch in h): raise ValueError("invalid hex color")
+        return "#"+h.lower()
     # Numeric/statistical primitives
     nums=[float(x) for x in items] if items else [float(a.get("value",0))]
     if op in ("sum","numeric_sum"): return sum(nums)
