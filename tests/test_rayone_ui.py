@@ -14,6 +14,7 @@ def test_rayone_has_blueprint_workspaces():
 
 def test_rayone_has_reactive_ai_presence():
     for token in ['id="activity-pill"', 'id="activity-text"', 'class="living-signal"',
+                  'class="living-canvas"', 'id="canvasContext"', 'id="canvasMode"',
                   'id="command-hud"', "setState("]:
         assert token in HTML
 
