@@ -13,8 +13,8 @@ def test_rayone_has_blueprint_workspaces():
         assert f'id="{item}"' in HTML
 
 def test_rayone_has_reactive_ai_presence():
-    for token in ["class="orb"", "@keyframes breath", "@keyframes think",
-                  "@keyframes execute", "@keyframes done", "setExec(", "setState("]:
+    for token in ['id="activity-pill"', 'id="activity-text"', 'class="living-signal"',
+                  'id="command-hud"', "setState("]:
         assert token in HTML
 
 def test_rayone_wires_real_execution_routes():
