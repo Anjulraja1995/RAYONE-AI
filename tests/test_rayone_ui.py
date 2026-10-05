@@ -47,3 +47,14 @@ def test_rayone_is_not_the_old_six_view_shell():
 def test_rayone_execution_feedback_and_recovery():
     for token in ["Execution started…", 'state==="Failed"', 'setState("Failed","error")', 'executionMonitor', 'runWorkspacePrompt']:
         assert token in HTML
+
+
+def test_rayone_matches_approved_design_reference():
+    for token in [
+        'class="top-search"', 'class="side-brand"', 'class="canvas-visual"',
+        'class="wave wave-gold"', 'class="wave wave-blue"',
+        'class="canvas-context-card"', 'class="canvas-focus-card"',
+        'class="system-bar"', 'id="command-hud"'
+    ]:
+        assert token in HTML
+    assert 'id="orb" class="orb"' not in HTML
