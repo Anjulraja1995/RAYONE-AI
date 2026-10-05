@@ -42,3 +42,8 @@ def test_rayone_is_not_the_old_six_view_shell():
     views = re.findall(r'id="([a-z]+View)" class="view', HTML)
     assert len(views) >= 14
     assert "controlView" in views and "executionView" in views
+
+
+def test_rayone_execution_feedback_and_recovery():
+    for token in ["Execution started…", 'state==="Failed"', 'setState("Failed","error")', 'executionMonitor', 'runWorkspacePrompt']:
+        assert token in HTML
