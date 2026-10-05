@@ -1240,7 +1240,7 @@ def _extended_local(family, op, a):
     if family=="finance":
         x=float(a.get("value",a.get("amount",0))); rate=float(a.get("rate",a.get("percent",0)))
         if op=="percentage": return x*rate/100
-        if op=="discount": return {"original":x,"rate":rate,"discount":x*rate/100,"final":x*(1-rate/100)}
+        if op=="discount": return x*(1-rate/100)
         if op=="markup": return x*(1+rate/100)
         if op=="tax": return x*(1+rate/100)
         if op=="tip": return x*(1+rate/100)
