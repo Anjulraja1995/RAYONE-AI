@@ -75,7 +75,7 @@ async function api(url,opt={}){opt.headers=Object.assign({},opt.headers||{},toke
 function showLogin(){$("login").classList.remove("hidden")}
 function hideLogin(){$("login").classList.add("hidden")}
 async function login(){let p=$("password").value;if(!p)return;$("loginErr").textContent="";try{let r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({password:p})}),d=await r.json();if(!r.ok)throw Error(d.detail||"Login failed");token=d.token;localStorage.setItem("rayone_token",token);hideLogin();boot()}catch(e){$("loginErr").textContent=e.message}}
-function setState(s,mode=""){ $("statusPill").textContent=s.toUpperCase();$("liveState").textContent=s;$("orb").className="orb "+mode}
+function setState(s,mode=""){ $("statusPill").textContent=s.toUpperCase();$("liveState").textContent=s;const a=$("activity-text");if(a)a.textContent=s;const pill=$("activity-pill");if(pill)pill.dataset.state=mode||"ready"}
 function activate(v){document.querySelectorAll(".view").forEach(x=>x.classList.remove("active"));$(v+"View").classList.add("active");document.querySelectorAll("#nav button").forEach(b=>b.classList.toggle("active",b.dataset.view===v));if(v==="tools")loadTools();if(v==="memory")loadMemory();if(v==="files")loadFiles();if(v==="automation")loadSchedules();if(v==="control")loadControl()}
 document.querySelectorAll("#nav button").forEach(b=>b.onclick=()=>activate(b.dataset.view));
 function add(text,who,meta){$("empty")?.remove();let d=document.createElement("div");d.className="msg "+(who==="user"?"user":"ray");d.innerHTML=esc(text)+(meta?'<div class="meta">'+esc(meta)+"</div>":"");$("messages").appendChild(d);$("messages").scrollTop=$("messages").scrollHeight}
