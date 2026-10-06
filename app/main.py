@@ -561,6 +561,8 @@ app.include_router(advanced_router)
 app.include_router(native_engines_router)
 from .production_routes import router as production_router
 app.include_router(production_router)
+from .execution_surfaces import router as execution_surfaces_router
+app.include_router(execution_surfaces_router)
 
 @app.on_event("startup")
 async def advanced_startup():
