@@ -1443,6 +1443,17 @@ def execute_local(family, op, a):
             rgb=a.get("rgb",a.get("value",items)); return "#"+ "".join(f"{int(float(x)):02x}" for x in rgb[:3])
         if op=="grayscale":
             rgb=a.get("rgb",a.get("value",items)); g=round(.299*float(rgb[0])+.587*float(rgb[1])+.114*float(rgb[2])); return [g,g,g]
+        if op=="normalize_hex":
+            h=str(a.get("value",a.get("color",""))).strip().lstrip("#")
+            if len(h)==3: h="".join(ch*2 for ch in h)
+            if len(h) not in (6,8) or any(ch not in "0123456789abcdefABCDEF" for ch in h): raise ValueError("invalid hex color")
+            return "#"+h.lower()
+    if family=="media" and op=="extension":
+        name=str(a.get("value",a.get("filename",""))).rsplit("/",1)[-1]
+        return name.rsplit(".",1)[1].lower() if "." in name else ""
+    if family=="media" and op=="stem":
+        name=str(a.get("value",a.get("filename",""))).rsplit("/",1)[-1]
+        return name.rsplit(".",1)[0] if "." in name else name
     # Text/string primitives
     if op=="lower": return text.lower()
     if op in ("upper","uppercase"): return text.upper()
@@ -1468,11 +1479,6 @@ def execute_local(family, op, a):
     if op in ("digits_only","remove_digits"): return "".join(c for c in text if c.isdigit()) if op=="digits_only" else "".join(c for c in text if not c.isdigit())
     if op=="letters_only": return "".join(c for c in text if c.isalpha())
     if op=="alnum_only": return "".join(c for c in text if c.isalnum())
-    if family=="colors" and op=="normalize_hex":
-        h=str(a.get("value",a.get("color",""))).strip().lstrip("#")
-        if len(h)==3: h="".join(ch*2 for ch in h)
-        if len(h) not in (6,8) or any(ch not in "0123456789abcdefABCDEF" for ch in h): raise ValueError("invalid hex color")
-        return "#"+h.lower()
     # Numeric/statistical primitives
     nums=[float(x) for x in items] if items else [float(a.get("value",0))]
     if op in ("sum","numeric_sum"): return sum(nums)
