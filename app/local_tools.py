@@ -1448,6 +1448,12 @@ def execute_local(family, op, a):
             if len(h)==3: h="".join(ch*2 for ch in h)
             if len(h) not in (6,8) or any(ch not in "0123456789abcdefABCDEF" for ch in h): raise ValueError("invalid hex color")
             return "#"+h.lower()
+    if family=="files" and op=="extension":
+        name=str(a.get("value",a.get("filename",""))).rsplit("/",1)[-1]
+        return name.rsplit(".",1)[1].lower() if "." in name else ""
+    if family=="files" and op=="stem":
+        name=str(a.get("value",a.get("filename",""))).rsplit("/",1)[-1]
+        return name.rsplit(".",1)[0] if "." in name else name
     if family=="media" and op=="extension":
         name=str(a.get("value",a.get("filename",""))).rsplit("/",1)[-1]
         return name.rsplit(".",1)[1].lower() if "." in name else ""
